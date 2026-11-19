@@ -12,6 +12,9 @@ CreativeSamplerAudioProcessor::CreativeSamplerAudioProcessor()
 
 CreativeSamplerAudioProcessor::~CreativeSamplerAudioProcessor()
 {
+    // Timer::stopTimer removes future ticks but does not join a callback that is
+    // already running on the message thread. Hold the manager lock through teardown.
+    juce::MessageManagerLock messageManagerLock;
     stopTimer();
     importService.shutdown();
     playbackEngine.reclaimRetired();

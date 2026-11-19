@@ -29,6 +29,8 @@ SamplePlaybackEngine::~SamplePlaybackEngine()
 
 void SamplePlaybackEngine::submitSample(std::unique_ptr<SampleStorage> sample) noexcept
 {
+    if (sample == nullptr)
+        return;
     auto* incoming = sample.release();
     auto* displaced = pendingSample.exchange(incoming, std::memory_order_acq_rel);
     // A displaced pending pointer was never acquired by the audio thread.
@@ -43,8 +45,11 @@ void SamplePlaybackEngine::prepare(double sampleRate) noexcept
     envelope.reset(outputRate, 0.005);
     envelope.setCurrentAndTargetValue(0.0f);
     sourcePosition = 0.0;
+    fadeFrames = outputRate * 0.005;
     playbackActive = false;
     stopAtZero = false;
+    playAfterInstall = false;
+    requestedPlaying = false;
     publishedPlaying.store(false, std::memory_order_relaxed);
 }
 
@@ -83,6 +88,24 @@ void SamplePlaybackEngine::beginFadeOut() noexcept
     stopAtZero = true;
 }
 
+void SamplePlaybackEngine::startPlayback() noexcept
+{
+    if (activeSample == nullptr)
+        return;
+
+    const auto sampleFramesAtHostRate = static_cast<double>(activeSample->audio().getNumSamples())
+        * outputRate / activeSample->metadata().sampleRate;
+    fadeFrames = juce::jmax(1.0, juce::jmin(outputRate * 0.005, sampleFramesAtHostRate * 0.2));
+    envelope.reset(outputRate, fadeFrames / outputRate);
+    sourcePosition = 0.0;
+    playbackActive = true;
+    stopAtZero = false;
+    endOfSampleFade = false;
+    envelope.setCurrentAndTargetValue(0.0f);
+    envelope.setTargetValue(1.0f);
+    gain.setTargetValue(requestedGain.load(std::memory_order_relaxed));
+}
+
 void SamplePlaybackEngine::installPendingIfPossible() noexcept
 {
     if (pendingInstall == nullptr)
@@ -111,35 +134,15 @@ void SamplePlaybackEngine::installPendingIfPossible() noexcept
     if (playAfterInstall)
     {
         playAfterInstall = false;
-        sourcePosition = 0.0;
-        playbackActive = true;
-        envelope.setCurrentAndTargetValue(0.0f);
-        envelope.setTargetValue(1.0f);
-        gain.setTargetValue(requestedGain.load(std::memory_order_relaxed));
+        startPlayback();
     }
 }
 
 float SamplePlaybackEngine::readInterpolated(int channel, double position) const noexcept
 {
     const auto& source = activeSample->audio();
-    const auto lastFrame = source.getNumSamples() - 1;
-    const auto first = juce::jlimit(0, lastFrame, static_cast<int>(position));
-    const auto previous = juce::jmax(first - 1, 0);
-    const auto second = juce::jmin(first + 1, lastFrame);
-    const auto afterSecond = juce::jmin(first + 2, lastFrame);
-    const auto fraction = static_cast<float>(position - static_cast<double>(first));
-    const auto* data = source.getReadPointer(channel);
-    // Four-point Catmull-Rom interpolation keeps pitch and duration correct when
-    // the host and source rates differ, without needing audio-thread scratch buffers.
-    const auto y0 = data[previous];
-    const auto y1 = data[first];
-    const auto y2 = data[second];
-    const auto y3 = data[afterSecond];
-    const auto halfY0 = 0.5f * y0;
-    const auto halfY3 = 0.5f * y3;
-    return y1 + fraction * ((0.5f * y2 - halfY0)
-        + fraction * (((y0 + 2.0f * y2) - (halfY3 + 2.5f * y1)
-        + fraction * ((halfY3 + 1.5f * y1) - (halfY0 + 1.5f * y2)))));
+    return resampler.interpolate(source.getReadPointer(channel), source.getNumSamples(), position,
+                                 activeSample->metadata().sampleRate / outputRate);
 }
 
 void SamplePlaybackEngine::process(juce::AudioBuffer<float>& output) noexcept
@@ -155,15 +158,7 @@ void SamplePlaybackEngine::process(juce::AudioBuffer<float>& output) noexcept
         {
             if (activeSample != nullptr && pendingInstall == nullptr
                 && pendingSample.load(std::memory_order_relaxed) == nullptr)
-            {
-                sourcePosition = 0.0;
-                playbackActive = true;
-                stopAtZero = false;
-                endOfSampleFade = false;
-                envelope.setCurrentAndTargetValue(0.0f);
-                envelope.setTargetValue(1.0f);
-                gain.setTargetValue(requestedGain.load(std::memory_order_relaxed));
-            }
+                startPlayback();
             else
             {
                 playAfterInstall = true;
@@ -195,13 +190,12 @@ void SamplePlaybackEngine::process(juce::AudioBuffer<float>& output) noexcept
     const auto outputChannels = output.getNumChannels();
     const auto sourceChannels = source.getNumChannels();
     const auto outputFrames = output.getNumSamples();
-    const auto rampFrames = juce::jmax(1.0, outputRate * 0.005);
     gain.setTargetValue(requestedGain.load(std::memory_order_relaxed));
 
     for (int frame = 0; frame < outputFrames; ++frame)
     {
         if (playbackActive && !endOfSampleFade
-            && (static_cast<double>(source.getNumSamples()) - sourcePosition) / step <= rampFrames)
+            && (static_cast<double>(source.getNumSamples()) - sourcePosition) / step <= fadeFrames)
         {
             endOfSampleFade = true;
             beginFadeOut();
@@ -226,7 +220,8 @@ void SamplePlaybackEngine::process(juce::AudioBuffer<float>& output) noexcept
                     output.addSample(channel, frame, readInterpolated(sourceChannel, sourcePosition) * currentGain);
                 }
             }
-            sourcePosition += step;
+            sourcePosition = juce::jmin(sourcePosition + step,
+                                        static_cast<double>(source.getNumSamples()));
         }
 
         if (stopAtZero && !envelope.isSmoothing() && envelope.getCurrentValue() <= 0.00001f)
@@ -237,11 +232,12 @@ void SamplePlaybackEngine::process(juce::AudioBuffer<float>& output) noexcept
         if (sourcePosition >= source.getNumSamples())
         {
             playbackActive = false;
-            envelope.setCurrentAndTargetValue(0.0f);
         }
     }
 
-    publishedPosition.store(sourcePosition / sourceRate, std::memory_order_relaxed);
+    publishedPosition.store(juce::jmin(sourcePosition / sourceRate,
+                                       static_cast<double>(source.getNumSamples()) / sourceRate),
+                            std::memory_order_relaxed);
     publishedPlaying.store(playbackActive || envelope.isSmoothing(), std::memory_order_relaxed);
 }
 

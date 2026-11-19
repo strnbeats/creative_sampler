@@ -152,7 +152,8 @@ AudioImportService::~AudioImportService()
 
 void AudioImportService::loadAsync(const juce::File& file)
 {
-    if (shuttingDown)
+    const juce::ScopedLock lock(resultLock);
+    if (shuttingDown.load(std::memory_order_acquire))
         return;
     const auto generation = latestGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
     workers.addJob(new ImportJob(*this, file, generation), true);
@@ -185,20 +186,29 @@ void AudioImportService::handleAsyncUpdate()
         }
         result = std::move(pendingResult);
     }
+    const juce::ScopedLock callbackGuard(callbackLock);
     if (!shuttingDown.load(std::memory_order_acquire) && resultCallback)
         resultCallback(std::move(result));
 }
 
 void AudioImportService::shutdown()
 {
-    if (shuttingDown.load(std::memory_order_relaxed))
-        return;
-    shuttingDown.store(true, std::memory_order_release);
+    {
+        const juce::ScopedLock callbackGuard(callbackLock);
+        if (shuttingDown.load(std::memory_order_relaxed))
+            return;
+        shuttingDown.store(true, std::memory_order_release);
+        resultCallback = {};
+    }
+    {
+        // Wait for a loadAsync() call that passed its shutdown check to finish
+        // adding its job before removeAllJobs() takes its snapshot.
+        const juce::ScopedLock loadGuard(resultLock);
+    }
     latestGeneration.fetch_add(1, std::memory_order_relaxed);
     workers.removeAllJobs(true, -1);
     cancelPendingUpdate();
     const juce::ScopedLock lock(resultLock);
     pendingResult = {};
     pendingResultGeneration = 0;
-    resultCallback = {};
 }

@@ -43,6 +43,7 @@ private:
     juce::ThreadPool workers { 1 };
     ResultCallback resultCallback;
     juce::CriticalSection resultLock;
+    juce::CriticalSection callbackLock;
     AudioImportResult pendingResult;
     juce::uint64 pendingResultGeneration = 0;
     std::atomic<juce::uint64> latestGeneration { 0 };

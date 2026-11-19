@@ -1,8 +1,11 @@
 #include <juce_core/juce_core.h>
 #include "SampleEngineTests.h"
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc > 1 && juce::String(argv[1]) == "--benchmark")
+        return runSampleEngineBenchmarks();
+
     juce::UnitTestRunner runner;
     runner.setAssertOnFailure(false);
     runner.setPassesAreLogged(true);

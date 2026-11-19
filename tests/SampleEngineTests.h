@@ -2,3 +2,4 @@
 #include <juce_core/juce_core.h>
 
 juce::UnitTest* getSampleEngineTest();
+int runSampleEngineBenchmarks();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../dsp/BandlimitedResampler.h"
 #include "../sample/SampleStorage.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
@@ -65,6 +66,7 @@ public:
 
 private:
     void installPendingIfPossible() noexcept;
+    void startPlayback() noexcept;
     void beginFadeOut() noexcept;
     float readInterpolated(int channel, double position) const noexcept;
 
@@ -76,6 +78,8 @@ private:
     SampleStorage* pendingInstall = nullptr;
     double outputRate = 44100.0;
     double sourcePosition = 0.0;
+    double fadeFrames = 220.0;
+    BandlimitedResampler resampler;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> gain;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> envelope;
     std::atomic<float> requestedGain { 1.0f };
