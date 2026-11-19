@@ -1,0 +1,54 @@
+cmake_minimum_required(VERSION 3.22)
+
+project(CreativeSampler VERSION 0.1.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# JUCE can be supplied either as an installed CMake package or as a source tree.
+if (DEFINED JUCE_SOURCE_DIR AND EXISTS "${JUCE_SOURCE_DIR}/CMakeLists.txt")
+    add_subdirectory("${JUCE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE")
+else()
+    find_package(JUCE CONFIG REQUIRED)
+endif()
+
+juce_add_plugin(CreativeSampler
+    COMPANY_NAME "Creative Sampler"
+    BUNDLE_ID "audio.creativesampler.plugin"
+    PLUGIN_MANUFACTURER_CODE CrSm
+    PLUGIN_CODE CrS1
+    PRODUCT_NAME "Creative Sampler"
+    DESCRIPTION "Turn samples into instruments"
+    VERSION ${PROJECT_VERSION}
+    FORMATS VST3
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    COPY_PLUGIN_AFTER_BUILD FALSE
+)
+
+juce_generate_juce_header(CreativeSampler)
+
+target_sources(CreativeSampler PRIVATE
+    src/plugin/PluginProcessor.cpp
+    src/plugin/PluginEditor.cpp
+)
+
+target_include_directories(CreativeSampler PRIVATE src)
+target_compile_definitions(CreativeSampler PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_VST3_CAN_REPLACE_VST2=0
+)
+
+target_link_libraries(CreativeSampler PRIVATE
+    juce::juce_audio_utils
+    juce::juce_audio_processors
+    juce::juce_gui_basics
+    PUBLIC
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags
+)
