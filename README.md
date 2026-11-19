@@ -1,6 +1,6 @@
 # Creative Sampler
 
-Модульный VST3 sampler на C++ и JUCE. Текущий этап — Phase 0: проектный каркас и прототип интерфейса. DSP-функции пока не реализованы; процессор намеренно выдаёт тишину.
+Модульный VST3 sampler на C++ и JUCE. Реализованы Phase 0 (проектный каркас) и базовая Phase 1 (импорт и playback Sample).
 
 ## Сборка
 
@@ -9,6 +9,7 @@
 ```sh
 cmake -S . -B build -DJUCE_SOURCE_DIR=/path/to/JUCE
 cmake --build build --config Release
+ctest --test-dir build --output-on-failure
 ```
 
 Если JUCE установлен с CMake package config, вместо `JUCE_SOURCE_DIR` передайте путь к его package config через `JUCE_DIR`.
@@ -30,6 +31,19 @@ cmake --build build --config Release
 
 ## Текущая функциональность
 
-- JUCE VST3 synth skeleton с MIDI-входом и mono/stereo выходом.
-- Минимальный тёмный editor как технический UI-прототип.
-- Состояние и звуковой движок пока не подключены.
+- Асинхронный импорт WAV/AIFF в mono/stereo.
+- Неизменяемое `SampleStorage`, отдельные метаданные и многослойные min/max waveform peaks.
+- Воспроизведение с mono/stereo маршрутизацией, Catmull-Rom sample-rate conversion, сглаживанием Play/Stop и параметром Volume.
+- Фиксированный lock-free handoff на audio thread; отложенное освобождение Sample выполняется message thread.
+- File Chooser, drag & drop, метаданные и понятные состояния импорта.
+- `CreativeSamplerTests` проверяет импорт, отказоустойчивость, waveform, playback, sample-rate conversion и конкурентную замену Sample.
+
+Полный декодированный Sample хранится в RAM; импорт ограничивает один Sample размером 2 GiB и сообщает об этом до выделения буфера. Форматы, отличные от WAV и AIFF, не заявлены. Анализ, slicing, polyphony, pitch/time-stretch и FX ещё не реализованы.
+
+## Передача Sample и время жизни
+
+`AudioImportService` выполняет декодирование и построение waveform в единственном worker-потоке. Отмена проверяется между чанками чтения и при построении waveform. `AsyncUpdater` передаёт результат на message thread; ошибки не меняют уже установленный Sample.
+
+После успешного импорта message thread передаёт `unique_ptr<SampleStorage>` в атомарный pending-slot. Audio thread забирает сырой указатель через acquire/release обмен и становится единственным владельцем активного указателя. UI не использует этот указатель и получает только копируемые metadata и отдельный неизменяемый `WaveformData`.
+
+При замене audio thread делает 5 ms fade-out и помещает предыдущий Sample в SPSC retirement queue. Если очередь заполнена, замена ждёт свободного места. Таймер Processor на message thread извлекает старые указатели и освобождает их. Поэтому `processBlock()` не меняет reference count, не блокируется и не уничтожает большие буферы. При уничтожении Processor сначала останавливается импорт и audio callback (со стороны host), затем оставшиеся объекты освобождаются вне realtime-потока.

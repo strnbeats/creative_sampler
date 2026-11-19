@@ -1,0 +1,204 @@
+#include "AudioImportService.h"
+#include <limits>
+#include <new>
+
+AudioImportResult AudioImporter::load(const juce::File& file,
+                                      const std::function<bool()>& shouldCancel) const
+{
+    AudioImportResult result;
+    if (shouldCancel && shouldCancel())
+        return result;
+    if (!file.existsAsFile())
+    {
+        result.error = "File does not exist.";
+        return result;
+    }
+    if (file.getSize() <= 0)
+    {
+        result.error = "The audio file is empty.";
+        return result;
+    }
+    if (!file.hasFileExtension("wav;aif;aiff"))
+    {
+        result.error = "Unsupported format. Choose a WAV or AIFF file.";
+        return result;
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+    if (shouldCancel && shouldCancel())
+        return result;
+    if (reader == nullptr)
+    {
+        result.error = "The audio file is damaged or could not be decoded.";
+        return result;
+    }
+    if ((reader->numChannels != 1 && reader->numChannels != 2)
+        || reader->lengthInSamples <= 0
+        || !std::isfinite(reader->sampleRate) || reader->sampleRate <= 0.0
+        || reader->lengthInSamples > std::numeric_limits<int>::max())
+    {
+        result.error = reader->lengthInSamples <= 0 ? "The audio file is empty."
+                                                    : "Only non-empty mono or stereo audio is supported.";
+        return result;
+    }
+
+    try
+    {
+        const auto frames = static_cast<int>(reader->lengthInSamples);
+        const auto decodedBytes = static_cast<juce::uint64>(reader->lengthInSamples)
+            * static_cast<juce::uint64>(reader->numChannels) * sizeof(float);
+        constexpr juce::uint64 maximumDecodedBytes = juce::uint64 { 2 } * 1024 * 1024 * 1024;
+        if (decodedBytes > maximumDecodedBytes
+            || decodedBytes > static_cast<juce::uint64>(std::numeric_limits<size_t>::max()))
+        {
+            result.error = "The decoded sample would exceed the 2 GiB in-memory limit.";
+            return result;
+        }
+        juce::AudioBuffer<float> decoded(static_cast<int>(reader->numChannels), frames);
+        decoded.clear();
+        constexpr int readChunkSize = 65536;
+        for (int offset = 0; offset < frames;)
+        {
+            if (shouldCancel && shouldCancel())
+                return result;
+            const auto count = juce::jmin(readChunkSize, frames - offset);
+            if (!reader->read(&decoded, offset, count, offset, true, true))
+            {
+                result.error = "An error occurred while reading the audio data.";
+                return result;
+            }
+            offset += count;
+        }
+
+        for (int channel = 0; channel < decoded.getNumChannels(); ++channel)
+        {
+            auto* data = decoded.getWritePointer(channel);
+            for (int frame = 0; frame < frames; ++frame)
+            {
+                if ((frame % readChunkSize) == 0 && shouldCancel && shouldCancel())
+                    return result;
+                if (!std::isfinite(data[frame]))
+                {
+                    result.error = "The file contains invalid audio samples.";
+                    return result;
+                }
+            }
+        }
+
+        SampleMetadata metadata;
+        metadata.fileName = file.getFileName();
+        metadata.filePath = file.getFullPathName();
+        metadata.sampleRate = reader->sampleRate;
+        metadata.channelCount = static_cast<int>(reader->numChannels);
+        metadata.bitDepth = static_cast<int>(reader->bitsPerSample);
+        metadata.sampleCount = reader->lengthInSamples;
+
+        auto prepared = std::make_unique<SampleStorage>(std::move(decoded), std::move(metadata));
+        auto generatedWaveform = WaveformData::generate(*prepared, 64, shouldCancel);
+        if (shouldCancel && shouldCancel())
+            return result;
+        auto waveformData = std::make_shared<WaveformData>(std::move(generatedWaveform));
+        result.sample = std::move(prepared);
+        result.waveform = std::move(waveformData);
+    }
+    catch (const std::bad_alloc&)
+    {
+        result.error = "There is not enough memory to load this audio file.";
+    }
+    catch (...)
+    {
+        result.error = "The audio file could not be loaded.";
+    }
+    return result;
+}
+
+class AudioImportService::ImportJob final : public juce::ThreadPoolJob
+{
+public:
+    ImportJob(AudioImportService& service, juce::File sourceFile, juce::uint64 requestGeneration)
+        : ThreadPoolJob("Creative Sampler audio import"), owner(service), file(std::move(sourceFile)),
+          generation(requestGeneration)
+    {
+    }
+
+    JobStatus runJob() override
+    {
+        if (shouldExit())
+            return jobHasFinished;
+        AudioImporter importer;
+        auto result = importer.load(file, [this] { return shouldExit(); });
+        if (!shouldExit())
+            owner.publishResult(generation, std::move(result));
+        return jobHasFinished;
+    }
+
+private:
+    AudioImportService& owner;
+    juce::File file;
+    juce::uint64 generation;
+};
+
+AudioImportService::AudioImportService(ResultCallback callback)
+    : resultCallback(std::move(callback))
+{
+}
+
+AudioImportService::~AudioImportService()
+{
+    shutdown();
+}
+
+void AudioImportService::loadAsync(const juce::File& file)
+{
+    if (shuttingDown)
+        return;
+    const auto generation = latestGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+    workers.addJob(new ImportJob(*this, file, generation), true);
+}
+
+void AudioImportService::publishResult(juce::uint64 generation, AudioImportResult result)
+{
+    if (shuttingDown.load(std::memory_order_acquire)
+        || generation != latestGeneration.load(std::memory_order_acquire))
+        return;
+    {
+        const juce::ScopedLock lock(resultLock);
+        if (generation != latestGeneration.load(std::memory_order_relaxed))
+            return;
+        pendingResult = std::move(result);
+        pendingResultGeneration = generation;
+    }
+    triggerAsyncUpdate();
+}
+
+void AudioImportService::handleAsyncUpdate()
+{
+    AudioImportResult result;
+    {
+        const juce::ScopedLock lock(resultLock);
+        if (pendingResultGeneration != latestGeneration.load(std::memory_order_relaxed))
+        {
+            pendingResult = {};
+            return;
+        }
+        result = std::move(pendingResult);
+    }
+    if (!shuttingDown.load(std::memory_order_acquire) && resultCallback)
+        resultCallback(std::move(result));
+}
+
+void AudioImportService::shutdown()
+{
+    if (shuttingDown.load(std::memory_order_relaxed))
+        return;
+    shuttingDown.store(true, std::memory_order_release);
+    latestGeneration.fetch_add(1, std::memory_order_relaxed);
+    workers.removeAllJobs(true, -1);
+    cancelPendingUpdate();
+    const juce::ScopedLock lock(resultLock);
+    pendingResult = {};
+    pendingResultGeneration = 0;
+    resultCallback = {};
+}
