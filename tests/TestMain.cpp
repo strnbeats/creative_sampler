@@ -1,4 +1,5 @@
 #include <juce_core/juce_core.h>
+#include "AnalysisInfrastructureTests.h"
 #include "SampleEngineTests.h"
 
 int main(int argc, char** argv)
@@ -10,6 +11,7 @@ int main(int argc, char** argv)
     runner.setAssertOnFailure(false);
     runner.setPassesAreLogged(true);
     juce::Array<juce::UnitTest*> tests;
+    tests.add(getAnalysisInfrastructureTest());
     tests.add(getSampleEngineTest());
     runner.runTests(tests);
 

@@ -1,6 +1,6 @@
 # Creative Sampler
 
-Модульный VST3 sampler на C++ и JUCE. Реализованы Phase 0 (проектный каркас), Phase 1 (импорт и playback Sample) и Phase 1.1 (band-limited resampling и validation).
+Модульный VST3 sampler на C++ и JUCE. Реализованы Phase 0 (проектный каркас), Phase 1 (импорт и playback Sample), Phase 1.1 (band-limited resampling и validation) и Phase 2A (инфраструктура анализа).
 
 ## Сборка
 
@@ -38,9 +38,11 @@ ctest --test-dir build --output-on-failure
 - Фиксированный lock-free handoff на audio thread; отложенное освобождение Sample выполняется message thread.
 - File Chooser, drag & drop, метаданные и понятные состояния импорта.
 - `CreativeSamplerTests` проверяет импорт, отказоустойчивость, waveform, playback, frequency response, alias suppression, DC, границы, block-size consistency, замену Sample и retirement-queue backpressure.
+- `AnalysisCoordinator` управляет одним background worker и одной ожидающей задачей; новые запросы отменяют устаревшие, а результат публикуется только для актуальных Sample ID и generation.
+- `AnalysisResult` хранит статусы и типизированные поля BPM, key и transients с проверкой инвариантов. Интерфейс `Analyzer` принимает immutable Sample и cancellation token; сами алгоритмы анализа пока не реализованы.
 - Для базовых CPU/memory измерений: `./build/CreativeSamplerTests_artefacts/Release/CreativeSamplerTests --benchmark`.
 
-Полный декодированный Sample хранится в RAM; импорт ограничивает один Sample размером 2 GiB и сообщает об этом до выделения буфера. Форматы, отличные от WAV и AIFF, не заявлены. Анализ, slicing, polyphony, pitch/time-stretch и FX ещё не реализованы.
+Полный декодированный Sample хранится в RAM; импорт ограничивает один Sample размером 2 GiB и сообщает об этом до выделения буфера. Форматы, отличные от WAV и AIFF, не заявлены. BPM/Key/Transient алгоритмы, slicing, polyphony, pitch/time-stretch и FX ещё не реализованы.
 
 ## Передача Sample и время жизни
 
@@ -57,5 +59,15 @@ Playback использует stateless polyphase windowed-sinc resampler: 63 ta
 Release measurements на локальном стенде для 96→44.1 kHz: passband 10 kHz +0.001 dB, alias от 30 kHz −85.73 dB, swept energy выше Nyquist −85.09 dB; ошибка DC для 0.37 — 1e−8. Проверена матрица source/host 44.1, 48, 88.2 и 96 kHz, включая одинаковые rates.
 
 Базовый Release benchmark: 5 s stereo/96 kHz source занимает 3,840,000 bytes, waveform peaks — 240,064 bytes; построение peaks занимает около 0.55 ms. Peak-data traversal 900 px stereo — около 1.3 ms на 1000 проходов. Playback занимает 0.24–0.27% realtime при host 44.1/48 kHz и 0.50–0.59% при 96 kHz для block sizes 64–1024. Это локальное микротестирование движка, не DAW CPU meter.
+
+## Phase 2A — analysis infrastructure
+
+`AnalysisCoordinator::setCurrentSample()` отмечает выбранный Sample. При каждой загрузке, включая повторную загрузку того же пути, вызывающий код должен выдавать новый ID через `createSampleId()`. `requestAnalysis()` принимает `shared_ptr<const SampleStorage>` и один или несколько независимых анализаторов; запросу назначается возрастающий generation.
+
+Выполнение сериализовано одним worker-потоком. В очереди находится максимум одна ожидающая задача: новый запрос отменяет активную работу и заменяет ожидающую. Анализаторы должны регулярно проверять переданный cancellation token. `latestResult()` возвращает защищённый снимок для чтения UI/message thread; realtime audio path этот API не вызывает.
+
+`AnalysisResult` различает NotAnalyzed, Running, Completed, Failed и Cancelled. Терминальные результаты привязаны к Sample ID и generation; устаревшие завершения игнорируются. Координатор ожидает окончания активного analyzer при shutdown, поэтому реализации analyzer обязаны поддерживать кооперативную отмену.
+
+В Phase 2A не подключены BPM/Key/Transient алгоритмы и UI-индикатор. Текущий playback engine передаёт Sample как `unique_ptr`; для дальнейшей интеграции анализа без копии audio buffer владельцу понадобится выдать общий immutable Sample handle для playback и analysis. Эта фаза оставляет playback ownership без изменений.
 
 Тесты и сборка не заменяют DAW smoke test: доступен только GarageBand, который не принимает VST3; REAPER и `pluginval` отсутствуют.

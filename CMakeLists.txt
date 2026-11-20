@@ -32,6 +32,8 @@ juce_add_plugin(CreativeSampler
 juce_generate_juce_header(CreativeSampler)
 
 target_sources(CreativeSampler PRIVATE
+    src/analysis/AnalysisCoordinator.cpp
+    src/analysis/AnalysisTypes.cpp
     src/dsp/BandlimitedResampler.cpp
     src/sample/SampleStorage.cpp
     src/import/AudioImportService.cpp
@@ -64,7 +66,10 @@ if (BUILD_TESTING)
     juce_generate_juce_header(CreativeSamplerTests)
     target_sources(CreativeSamplerTests PRIVATE
         tests/TestMain.cpp
+        tests/AnalysisInfrastructureTests.cpp
         tests/SampleEngineTests.cpp
+        src/analysis/AnalysisCoordinator.cpp
+        src/analysis/AnalysisTypes.cpp
         src/dsp/BandlimitedResampler.cpp
         src/sample/SampleStorage.cpp
         src/import/AudioImportService.cpp
