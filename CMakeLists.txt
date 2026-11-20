@@ -21,7 +21,7 @@ juce_add_plugin(CreativeSampler
     PRODUCT_NAME "Creative Sampler"
     DESCRIPTION "Turn samples into instruments"
     VERSION ${PROJECT_VERSION}
-    FORMATS VST3
+    FORMATS VST3 Standalone
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
