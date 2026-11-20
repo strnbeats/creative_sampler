@@ -609,6 +609,27 @@ public:
             engine.process(block);
             engine.reclaimRetired();
         }
+
+        beginTest("Shared Sample remains alive for analysis after playback replacement");
+        {
+            SamplePlaybackEngine engine;
+            engine.prepare(48000.0);
+            SampleHandle playbackAndAnalysis = SampleHandle(makeSample(1, 48000, 48000.0));
+            std::weak_ptr<const SampleStorage> observedLifetime = playbackAndAnalysis;
+            expect(engine.submitSharedSample(playbackAndAnalysis));
+            juce::AudioBuffer<float> block(2, 512);
+            engine.process(block);
+
+            auto analysisLease = playbackAndAnalysis;
+            playbackAndAnalysis.reset();
+            expect(engine.submitSharedSample(SampleHandle(makeSample(1, 2048, 48000.0, -0.2f))));
+            engine.process(block);
+            engine.reclaimRetired();
+            expect(!observedLifetime.expired());
+
+            analysisLease.reset();
+            expect(observedLifetime.expired());
+        }
     }
 };
 

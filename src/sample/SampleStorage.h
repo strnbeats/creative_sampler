@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
+#include <memory>
 
 struct SampleMetadata
 {
@@ -31,3 +32,5 @@ private:
     juce::AudioBuffer<float> sampleAudio;
     SampleMetadata sampleMetadata;
 };
+
+using SampleHandle = std::shared_ptr<const SampleStorage>;

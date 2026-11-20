@@ -21,13 +21,32 @@ bool isScaleModeValid(ScaleMode mode) noexcept
 
 bool isBpmValid(const BpmAnalysis& bpm) noexcept
 {
-    if (!std::isfinite(bpm.value) || bpm.value <= 0.0 || !isConfidenceValid(bpm.confidence))
+    if (!std::isfinite(bpm.minimumBpm) || !std::isfinite(bpm.maximumBpm)
+        || bpm.minimumBpm <= 0.0 || bpm.maximumBpm <= bpm.minimumBpm
+        || !isConfidenceValid(bpm.confidence) || !isConfidenceValid(bpm.score))
         return false;
     for (const auto& candidate : bpm.alternatives)
-        if (!std::isfinite(candidate.value) || candidate.value <= 0.0
-            || !isConfidenceValid(candidate.confidence))
+        if (!std::isfinite(candidate.value) || candidate.value < bpm.minimumBpm
+            || candidate.value > bpm.maximumBpm || !isConfidenceValid(candidate.confidence)
+            || !isConfidenceValid(candidate.score))
             return false;
-    return true;
+
+    if (bpm.manualOverride && (!std::isfinite(*bpm.manualOverride)
+        || *bpm.manualOverride < bpm.minimumBpm || *bpm.manualOverride > bpm.maximumBpm))
+        return false;
+
+    switch (bpm.detectionStatus)
+    {
+        case BpmDetectionStatus::detected:
+        case BpmDetectionStatus::lowConfidence:
+            return bpm.value && std::isfinite(*bpm.value) && *bpm.value >= bpm.minimumBpm
+                && *bpm.value <= bpm.maximumBpm;
+        case BpmDetectionStatus::insufficientData:
+        case BpmDetectionStatus::noRhythmicContent:
+            return !bpm.value && !bpm.manualOverride && bpm.confidence == 0.0f
+                && bpm.score == 0.0f && bpm.alternatives.empty() && !bpm.octaveAmbiguous;
+    }
+    return false;
 }
 
 bool isKeyValid(const KeyAnalysis& key) noexcept
@@ -69,6 +88,19 @@ bool isResultDataValid(const AnalysisResult& result) noexcept
 
     return true;
 }
+}
+
+bool BpmAnalysis::isValid() const noexcept
+{
+    return isBpmValid(*this);
+}
+
+bool BpmAnalysis::setManualOverride(double bpm) noexcept
+{
+    if (!value || !std::isfinite(bpm) || bpm < minimumBpm || bpm > maximumBpm)
+        return false;
+    manualOverride = bpm;
+    return true;
 }
 
 bool AnalysisResult::isValid() const noexcept

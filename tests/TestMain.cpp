@@ -1,17 +1,21 @@
 #include <juce_core/juce_core.h>
 #include "AnalysisInfrastructureTests.h"
+#include "BPMAnalyzerTests.h"
 #include "SampleEngineTests.h"
 
 int main(int argc, char** argv)
 {
     if (argc > 1 && juce::String(argv[1]) == "--benchmark")
         return runSampleEngineBenchmarks();
+    if (argc > 1 && juce::String(argv[1]) == "--bpm-benchmark")
+        return runBPMAnalyzerBenchmarks();
 
     juce::UnitTestRunner runner;
     runner.setAssertOnFailure(false);
     runner.setPassesAreLogged(true);
     juce::Array<juce::UnitTest*> tests;
     tests.add(getAnalysisInfrastructureTest());
+    tests.add(getBPMAnalyzerTest());
     tests.add(getSampleEngineTest());
     runner.runTests(tests);
 

@@ -29,6 +29,7 @@ public:
         std::vector<std::shared_ptr<const Analyzer>> analyzers);
 
     void cancel();
+    void shutdown();
 
     // Intended for UI/message-thread consumers and tests, never for the audio thread.
     AnalysisResult latestResult() const;
@@ -50,6 +51,7 @@ private:
     AnalysisResult run(const WorkItem& item) const;
 
     mutable std::mutex stateMutex;
+    std::mutex shutdownMutex;
     std::condition_variable workAvailable;
     bool shuttingDown = false;
     AnalysisSampleId currentSampleId = 0;

@@ -25,11 +25,29 @@ AnalysisCoordinator::AnalysisCoordinator()
 
 AnalysisCoordinator::~AnalysisCoordinator()
 {
+    shutdown();
+}
+
+void AnalysisCoordinator::shutdown()
+{
+    const std::lock_guard<std::mutex> shutdownLock(shutdownMutex);
     {
         const std::lock_guard<std::mutex> lock(stateMutex);
-        shuttingDown = true;
-        cancelCurrentLocked();
-        pendingWork.reset();
+        if (!shuttingDown)
+        {
+            shuttingDown = true;
+            cancelCurrentLocked();
+            pendingWork.reset();
+            if (result.status == AnalysisStatus::running)
+            {
+                ++generation;
+                result.status = AnalysisStatus::cancelled;
+                result.bpm.reset();
+                result.key.reset();
+                result.transients.reset();
+                result.error.clear();
+            }
+        }
     }
     workAvailable.notify_one();
     if (worker.joinable())
@@ -44,6 +62,8 @@ AnalysisSampleId AnalysisCoordinator::createSampleId() noexcept
 AnalysisIdentity AnalysisCoordinator::setCurrentSample(AnalysisSampleId sampleId)
 {
     const std::lock_guard<std::mutex> lock(stateMutex);
+    if (shuttingDown)
+        return {};
     cancelCurrentLocked();
     pendingWork.reset();
     currentSampleId = sampleId;

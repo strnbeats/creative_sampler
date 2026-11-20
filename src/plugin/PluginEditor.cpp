@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include <algorithm>
 
 namespace
 {
@@ -7,6 +8,49 @@ const auto surface = juce::Colour(0xff1b1d25);
 const auto foreground = juce::Colour(0xfff2f0f7);
 const auto muted = juce::Colour(0xffa3a4b2);
 const auto accent = juce::Colour(0xff72f2cf);
+
+juce::String makeAnalysisStatusText(const AnalysisResult& result)
+{
+    if (result.status == AnalysisStatus::running)
+        return "BPM analysis…";
+    if (result.status == AnalysisStatus::failed)
+        return "BPM analysis error: " + result.error;
+    if (result.status == AnalysisStatus::cancelled)
+        return "BPM analysis cancelled";
+    if (result.status == AnalysisStatus::notAnalyzed || !result.bpm)
+        return "BPM not analyzed";
+
+    const auto& bpm = *result.bpm;
+    switch (bpm.detectionStatus)
+    {
+        case BpmDetectionStatus::insufficientData:
+            return "BPM unavailable: sample is too short";
+        case BpmDetectionStatus::noRhythmicContent:
+            return "BPM unavailable: no stable rhythm";
+        case BpmDetectionStatus::lowConfidence:
+        case BpmDetectionStatus::detected:
+            break;
+    }
+
+    if (!bpm.effectiveValue())
+        return "BPM unavailable";
+    auto text = "BPM " + juce::String(*bpm.effectiveValue(), 1)
+        + "  ·  confidence " + juce::String(juce::roundToInt(bpm.confidence * 100.0f)) + "%";
+    if (bpm.octaveAmbiguous)
+    {
+        const auto octaveAlternative = std::find_if(bpm.alternatives.begin(), bpm.alternatives.end(),
+            [&bpm](const auto& candidate)
+            {
+                const auto ratio = candidate.value / *bpm.value;
+                return (ratio >= 1.90 && ratio <= 2.10) || (ratio >= 0.476 && ratio <= 0.526);
+            });
+        if (octaveAlternative != bpm.alternatives.end())
+            text += "  ·  also " + juce::String(octaveAlternative->value, 1);
+    }
+    if (bpm.detectionStatus == BpmDetectionStatus::lowConfidence)
+        text += "  ·  low confidence";
+    return text;
+}
 }
 
 CreativeSamplerAudioProcessorEditor::CreativeSamplerAudioProcessorEditor(
@@ -97,7 +141,10 @@ void CreativeSamplerAudioProcessorEditor::openFileChooser()
 
 void CreativeSamplerAudioProcessorEditor::timerCallback()
 {
-    statusLabel.setText(audioProcessor.importStatus(), juce::dontSendNotification);
+    auto status = audioProcessor.importStatus();
+    if (audioProcessor.hasSample())
+        status += "  ·  " + makeAnalysisStatusText(audioProcessor.currentAnalysisResult());
+    statusLabel.setText(status, juce::dontSendNotification);
     const auto ready = audioProcessor.hasSample();
     playButton.setEnabled(ready);
     stopButton.setEnabled(audioProcessor.isSamplePlaying());
@@ -176,7 +223,7 @@ void CreativeSamplerAudioProcessorEditor::paint(juce::Graphics& graphics)
     graphics.drawText("CREATIVE SAMPLER", 42, 28, 380, 36, juce::Justification::centredLeft);
     graphics.setColour(muted);
     graphics.setFont(juce::FontOptions(12.0f));
-    graphics.drawText("SAMPLE PLAYER  /  PHASE 1", 42, 66, 360, 22, juce::Justification::centredLeft);
+    graphics.drawText("SAMPLE PLAYER  /  BPM ANALYSIS", 42, 66, 360, 22, juce::Justification::centredLeft);
 
     auto waveformBounds = getLocalBounds().toFloat().reduced(42.0f);
     waveformBounds = { waveformBounds.getX(), 174.0f, waveformBounds.getWidth(),

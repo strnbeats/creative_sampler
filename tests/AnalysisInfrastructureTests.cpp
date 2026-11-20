@@ -88,6 +88,11 @@ public:
             expect(!result.isValid()); // Completed without any analyzer output is invalid.
             result.bpm = BpmAnalysis { 120.0, 0.8f, { { 60.0, 0.3f } } };
             expect(result.isValid());
+            expect(result.bpm->isValid());
+            expect(result.bpm->setManualOverride(121.5));
+            expectWithinAbsoluteError(*result.bpm->effectiveValue(), 121.5, 0.0001);
+            expect(!result.bpm->setManualOverride(221.0));
+            expect(!result.bpm->setManualOverride(std::numeric_limits<double>::quiet_NaN()));
             result.identity = {};
             expect(!result.isValid()); // Terminal results must identify their Sample generation.
             result.identity = { 1, 1 };
@@ -160,7 +165,7 @@ public:
             expect(newer && result.identity == *newer);
             expect(result.bpm.has_value());
             if (result.bpm)
-                expectWithinAbsoluteError(result.bpm->value, 97.0, 0.0001);
+                expectWithinAbsoluteError(*result.bpm->value, 97.0, 0.0001);
         }
 
         beginTest("Sample replacement invalidates an in-flight analysis for the old identity");
@@ -193,7 +198,7 @@ public:
             expect(newRequest && completed.identity == *newRequest);
             expect(completed.bpm.has_value());
             if (completed.bpm)
-                expectWithinAbsoluteError(completed.bpm->value, 111.0, 0.0001);
+                expectWithinAbsoluteError(*completed.bpm->value, 111.0, 0.0001);
         }
 
         beginTest("Independent analyzer outputs combine and explicit cancellation stays terminal");

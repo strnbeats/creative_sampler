@@ -51,6 +51,8 @@ public:
 
     // Called on the message thread. Ownership remains here unless accepted.
     void submitSample(std::unique_ptr<SampleStorage> sample) noexcept;
+    // Copies/moves the shared handle on the caller thread; process() only sees an owner envelope pointer.
+    bool submitSharedSample(SampleHandle sample) noexcept;
     void prepare(double outputSampleRate) noexcept;
     void play() noexcept;
     void stop() noexcept;
@@ -65,17 +67,24 @@ public:
     bool isPlaying() const noexcept { return publishedPlaying.load(std::memory_order_relaxed); }
 
 private:
+    struct SampleOwner final
+    {
+        SampleHandle sample;
+    };
+    static_assert(std::atomic<SampleOwner*>::is_always_lock_free,
+                  "The sample handoff requires lock-free pointer atomics on the target platform.");
+
     void installPendingIfPossible() noexcept;
     void startPlayback() noexcept;
     void beginFadeOut() noexcept;
     float readInterpolated(int channel, double position) const noexcept;
 
-    std::atomic<SampleStorage*> pendingSample { nullptr };
-    SpscPointerQueue<SampleStorage, 128> retiredSamples;
+    std::atomic<SampleOwner*> pendingSample { nullptr };
+    SpscPointerQueue<SampleOwner, 128> retiredSamples;
 
     // The following members are owned exclusively by the audio thread after prepare().
-    SampleStorage* activeSample = nullptr;
-    SampleStorage* pendingInstall = nullptr;
+    SampleOwner* activeSample = nullptr;
+    SampleOwner* pendingInstall = nullptr;
     double outputRate = 44100.0;
     double sourcePosition = 0.0;
     double fadeFrames = 220.0;

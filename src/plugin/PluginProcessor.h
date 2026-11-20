@@ -1,6 +1,8 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "../analysis/AnalysisCoordinator.h"
+#include "../analysis/BPMAnalyzer.h"
 #include "../import/AudioImportService.h"
 #include "../playback/SamplePlaybackEngine.h"
 #include <optional>
@@ -43,6 +45,7 @@ public:
     bool hasSample() const noexcept { return sampleMetadata.has_value(); }
     const std::optional<SampleMetadata>& currentSampleMetadata() const noexcept { return sampleMetadata; }
     std::shared_ptr<const WaveformData> currentWaveform() const noexcept { return waveform; }
+    AnalysisResult currentAnalysisResult() const { return analysisCoordinator.latestResult(); }
     const juce::String& importStatus() const noexcept { return currentImportStatus; }
     float volumeValue() const noexcept;
 
@@ -54,6 +57,9 @@ private:
     juce::AudioProcessorValueTreeState parameters;
     std::atomic<float>* volumeParameter = nullptr;
     SamplePlaybackEngine playbackEngine;
+    SampleHandle currentSample;
+    AnalysisCoordinator analysisCoordinator;
+    std::shared_ptr<const BPMAnalyzer> bpmAnalyzer;
     AudioImportService importService;
     std::optional<SampleMetadata> sampleMetadata;
     std::shared_ptr<const WaveformData> waveform;

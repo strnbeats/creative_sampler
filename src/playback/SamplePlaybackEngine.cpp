@@ -1,9 +1,8 @@
 #include "SamplePlaybackEngine.h"
 #include <algorithm>
 #include <cmath>
+#include <new>
 
-static_assert(std::atomic<SampleStorage*>::is_always_lock_free,
-              "The sample handoff requires lock-free pointer atomics on the target platform.");
 static_assert(std::atomic<juce::uint64>::is_always_lock_free
               && std::atomic<double>::is_always_lock_free
               && std::atomic<float>::is_always_lock_free
@@ -31,10 +30,27 @@ void SamplePlaybackEngine::submitSample(std::unique_ptr<SampleStorage> sample) n
 {
     if (sample == nullptr)
         return;
-    auto* incoming = sample.release();
+    try
+    {
+        (void) submitSharedSample(SampleHandle(std::move(sample)));
+    }
+    catch (...)
+    {
+        // Keep the current source if allocating the shared ownership control block fails.
+    }
+}
+
+bool SamplePlaybackEngine::submitSharedSample(SampleHandle sample) noexcept
+{
+    if (sample == nullptr)
+        return false;
+    auto* incoming = new (std::nothrow) SampleOwner { std::move(sample) };
+    if (incoming == nullptr)
+        return false;
     auto* displaced = pendingSample.exchange(incoming, std::memory_order_acq_rel);
     // A displaced pending pointer was never acquired by the audio thread.
     delete displaced;
+    return true;
 }
 
 void SamplePlaybackEngine::prepare(double sampleRate) noexcept
@@ -93,8 +109,9 @@ void SamplePlaybackEngine::startPlayback() noexcept
     if (activeSample == nullptr)
         return;
 
-    const auto sampleFramesAtHostRate = static_cast<double>(activeSample->audio().getNumSamples())
-        * outputRate / activeSample->metadata().sampleRate;
+    const auto& sample = *activeSample->sample;
+    const auto sampleFramesAtHostRate = static_cast<double>(sample.audio().getNumSamples())
+        * outputRate / sample.metadata().sampleRate;
     fadeFrames = juce::jmax(1.0, juce::jmin(outputRate * 0.005, sampleFramesAtHostRate * 0.2));
     envelope.reset(outputRate, fadeFrames / outputRate);
     sourcePosition = 0.0;
@@ -140,9 +157,9 @@ void SamplePlaybackEngine::installPendingIfPossible() noexcept
 
 float SamplePlaybackEngine::readInterpolated(int channel, double position) const noexcept
 {
-    const auto& source = activeSample->audio();
+    const auto& source = activeSample->sample->audio();
     return resampler.interpolate(source.getReadPointer(channel), source.getNumSamples(), position,
-                                 activeSample->metadata().sampleRate / outputRate);
+                                 activeSample->sample->metadata().sampleRate / outputRate);
 }
 
 void SamplePlaybackEngine::process(juce::AudioBuffer<float>& output) noexcept
@@ -181,8 +198,8 @@ void SamplePlaybackEngine::process(juce::AudioBuffer<float>& output) noexcept
         return;
     }
 
-    const auto& source = activeSample->audio();
-    const auto sourceRate = activeSample->metadata().sampleRate;
+    const auto& source = activeSample->sample->audio();
+    const auto sourceRate = activeSample->sample->metadata().sampleRate;
     const auto step = sourceRate / outputRate;
     if (!std::isfinite(step) || step <= 0.0)
         return;

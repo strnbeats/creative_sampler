@@ -1,9 +1,11 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <new>
 
 CreativeSamplerAudioProcessor::CreativeSamplerAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, "PARAMETERS", createParameterLayout()),
+      bpmAnalyzer(std::make_shared<BPMAnalyzer>()),
       importService([this](AudioImportResult result) { handleImportResult(std::move(result)); })
 {
     volumeParameter = parameters.getRawParameterValue("volume");
@@ -17,7 +19,9 @@ CreativeSamplerAudioProcessor::~CreativeSamplerAudioProcessor()
     juce::MessageManagerLock messageManagerLock;
     stopTimer();
     importService.shutdown();
+    analysisCoordinator.shutdown();
     playbackEngine.reclaimRetired();
+    currentSample.reset();
 }
 
 void CreativeSamplerAudioProcessor::prepareToPlay(double sampleRate, int)
@@ -92,9 +96,38 @@ void CreativeSamplerAudioProcessor::handleImportResult(AudioImportResult result)
         return;
     }
 
-    sampleMetadata = result.sample->metadata();
+    SampleHandle sample;
+    try
+    {
+        sample = SampleHandle(std::move(result.sample));
+    }
+    catch (const std::bad_alloc&)
+    {
+        currentImportStatus = "Not enough memory to share the imported Sample.";
+        return;
+    }
+
+    if (!playbackEngine.submitSharedSample(sample))
+    {
+        currentImportStatus = "Not enough memory to prepare the Sample for playback.";
+        return;
+    }
+
+    sampleMetadata = sample->metadata();
     waveform = std::move(result.waveform);
-    playbackEngine.submitSample(std::move(result.sample));
+    currentSample = sample;
+    const auto sampleId = AnalysisCoordinator::createSampleId();
+    analysisCoordinator.setCurrentSample(sampleId);
+    try
+    {
+        std::vector<std::shared_ptr<const Analyzer>> analyzers;
+        analyzers.push_back(bpmAnalyzer);
+        (void) analysisCoordinator.requestAnalysis(sampleId, std::move(sample), std::move(analyzers));
+    }
+    catch (const std::bad_alloc&)
+    {
+        // Playback remains available even if the background analysis request cannot be allocated.
+    }
     currentImportStatus = "Ready";
 }
 
