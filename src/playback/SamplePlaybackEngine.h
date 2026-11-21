@@ -1,47 +1,11 @@
 #pragma once
 
 #include "../dsp/BandlimitedResampler.h"
+#include "../realtime/SpscPointerQueue.h"
 #include "../sample/SampleStorage.h"
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <array>
 #include <atomic>
 #include <memory>
-
-// Fixed-capacity single-producer/single-consumer pointer queue.
-template <typename T, size_t Capacity>
-class SpscPointerQueue final
-{
-    static_assert(Capacity > 1);
-    static_assert(std::atomic<size_t>::is_always_lock_free,
-                  "The audio retirement queue requires lock-free index atomics.");
-public:
-    bool push(T* value) noexcept
-    {
-        const auto write = writeIndex.load(std::memory_order_relaxed);
-        const auto next = increment(write);
-        if (next == readIndex.load(std::memory_order_acquire))
-            return false;
-        entries[write] = value;
-        writeIndex.store(next, std::memory_order_release);
-        return true;
-    }
-
-    T* pop() noexcept
-    {
-        const auto read = readIndex.load(std::memory_order_relaxed);
-        if (read == writeIndex.load(std::memory_order_acquire))
-            return nullptr;
-        auto* value = entries[read];
-        readIndex.store(increment(read), std::memory_order_release);
-        return value;
-    }
-
-private:
-    static constexpr size_t increment(size_t index) noexcept { return (index + 1) % Capacity; }
-    std::array<T*, Capacity> entries {};
-    alignas(64) std::atomic<size_t> writeIndex { 0 };
-    alignas(64) std::atomic<size_t> readIndex { 0 };
-};
 
 class SamplePlaybackEngine final
 {

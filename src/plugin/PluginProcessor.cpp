@@ -23,17 +23,20 @@ CreativeSamplerAudioProcessor::~CreativeSamplerAudioProcessor()
     importService.shutdown();
     analysisCoordinator.shutdown();
     playbackEngine.reclaimRetired();
+    slicePlaybackEngine.reclaimRetired();
     currentSample.reset();
 }
 
 void CreativeSamplerAudioProcessor::prepareToPlay(double sampleRate, int)
 {
     playbackEngine.prepare(sampleRate);
+    slicePlaybackEngine.prepare(sampleRate);
 }
 
 void CreativeSamplerAudioProcessor::releaseResources()
 {
     playbackEngine.stop();
+    slicePlaybackEngine.stopVoices();
 }
 
 bool CreativeSamplerAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -46,9 +49,13 @@ void CreativeSamplerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffe
                                                   juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
-    juce::ignoreUnused(midiMessages);
+    const auto baseWasPlaying = playbackEngine.isPlaying();
     playbackEngine.setVolume(volumeValue());
+    slicePlaybackEngine.setVolume(volumeValue());
     playbackEngine.process(buffer);
+    slicePlaybackEngine.process(buffer, midiMessages,
+                                baseWasPlaying || playbackEngine.isPlaying());
+    midiMessages.clear();
 }
 
 juce::AudioProcessorEditor* CreativeSamplerAudioProcessor::createEditor()
@@ -119,6 +126,10 @@ void CreativeSamplerAudioProcessor::handleImportResult(AudioImportResult result)
     waveform = std::move(result.waveform);
     currentSample = sample;
     const auto sampleId = AnalysisCoordinator::createSampleId();
+    (void) sliceEngine.setSample(sampleId, sample->metadata().sampleCount);
+    slicePlaybackEngine.setCurrentSampleId(sampleId);
+    publishedSliceRevision = std::numeric_limits<std::uint64_t>::max();
+    publishSliceSnapshotIfNeeded();
     analysisCoordinator.setCurrentSample(sampleId);
     try
     {
@@ -139,6 +150,28 @@ void CreativeSamplerAudioProcessor::handleImportResult(AudioImportResult result)
 void CreativeSamplerAudioProcessor::timerCallback()
 {
     playbackEngine.reclaimRetired();
+    slicePlaybackEngine.reclaimRetired();
+    publishSliceSnapshotIfNeeded();
+}
+
+void CreativeSamplerAudioProcessor::publishSliceSnapshotIfNeeded()
+{
+    if (currentSample == nullptr || sliceEngine.sampleId() == 0
+        || publishedSliceRevision == sliceEngine.revision())
+        return;
+
+    auto snapshot = SlicePlaybackSnapshot::create(currentSample, sliceEngine.sampleId(), sliceEngine);
+    if (snapshot == nullptr)
+    {
+        currentImportStatus = "Could not prepare the slice map for playback.";
+        return;
+    }
+    if (!slicePlaybackEngine.publishSnapshot(std::move(snapshot)))
+    {
+        currentImportStatus = "Could not publish the slice map for playback.";
+        return;
+    }
+    publishedSliceRevision = sliceEngine.revision();
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

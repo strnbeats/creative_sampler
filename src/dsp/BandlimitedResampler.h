@@ -18,6 +18,9 @@ public:
 
     float interpolate(const float* source, int sourceLength, double sourcePosition,
                       double sourceFramesPerOutputFrame) const noexcept;
+    float interpolateRange(const float* source, int sourceLength, int sourceStart,
+                           int sourceEndExclusive, double sourcePosition,
+                           double sourceFramesPerOutputFrame) const noexcept;
 
 private:
     const float* coefficients = nullptr;

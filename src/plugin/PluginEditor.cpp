@@ -84,13 +84,15 @@ juce::String makeAnalysisStatusText(const AnalysisResult& result)
 
 CreativeSamplerAudioProcessorEditor::CreativeSamplerAudioProcessorEditor(
     CreativeSamplerAudioProcessor& processorRef)
-    : AudioProcessorEditor(&processorRef), audioProcessor(processorRef)
+    : AudioProcessorEditor(&processorRef), audioProcessor(processorRef),
+      waveformEditor(processorRef.sliceEngineForUi())
 {
     setSize(900, 560);
     setResizable(true, true);
     setResizeLimits(680, 440, 1600, 1000);
 
-    for (auto* button : { &importButton, &playButton, &stopButton })
+    for (auto* button : { &importButton, &playButton, &stopButton,
+                          &splitButton, &deleteSliceButton, &resetSlicesButton })
     {
         button->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff282b34));
         button->setColour(juce::TextButton::textColourOffId, foreground);
@@ -101,6 +103,10 @@ CreativeSamplerAudioProcessorEditor::CreativeSamplerAudioProcessorEditor(
     importButton.onClick = [this] { openFileChooser(); };
     playButton.onClick = [this] { audioProcessor.playSample(); };
     stopButton.onClick = [this] { audioProcessor.stopSample(); };
+    splitButton.onClick = [this] { (void) waveformEditor.splitSelectedAtMidpoint(); };
+    deleteSliceButton.onClick = [this] { (void) waveformEditor.deleteSelectedSlice(); };
+    resetSlicesButton.onClick = [this] { (void) waveformEditor.resetSlices(); };
+    addAndMakeVisible(waveformEditor);
 
     volumeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     volumeSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 56, 24);
@@ -170,7 +176,17 @@ void CreativeSamplerAudioProcessorEditor::openFileChooser()
 
 void CreativeSamplerAudioProcessorEditor::timerCallback()
 {
-    refreshAnalysisCache();
+    const auto analysisChanged = refreshAnalysisCache();
+    const auto sampleId = audioProcessor.sliceEngineForUi().sampleId();
+    waveformEditor.setSource(audioProcessor.currentWaveform(), audioProcessor.currentSampleMetadata(), sampleId);
+    if (analysisChanged)
+    {
+        const auto currentAnalysis = cachedAnalysis.identity.sampleId == sampleId;
+        waveformEditor.setTransientAnalysis(currentAnalysis && cachedAnalysis.transients
+                                                ? &*cachedAnalysis.transients : nullptr,
+                                            currentAnalysis ? sampleId : 0);
+    }
+    waveformEditor.setPlaybackPosition(audioProcessor.playbackPositionSeconds());
     auto status = audioProcessor.importStatus();
     if (audioProcessor.hasSample())
         status += "  ·  " + makeAnalysisStatusText(cachedAnalysis);
@@ -178,6 +194,10 @@ void CreativeSamplerAudioProcessorEditor::timerCallback()
     const auto ready = audioProcessor.hasSample();
     playButton.setEnabled(ready);
     stopButton.setEnabled(audioProcessor.isSamplePlaying());
+    const auto hasSlices = !audioProcessor.sliceEngineForUi().slices().empty();
+    splitButton.setEnabled(ready && hasSlices && waveformEditor.canSplitSelectedAtMidpoint());
+    deleteSliceButton.setEnabled(ready && hasSlices);
+    resetSlicesButton.setEnabled(ready);
     if (ready)
     {
         const auto& metadata = *audioProcessor.currentSampleMetadata();
@@ -195,7 +215,7 @@ void CreativeSamplerAudioProcessorEditor::timerCallback()
     repaint();
 }
 
-void CreativeSamplerAudioProcessorEditor::refreshAnalysisCache()
+bool CreativeSamplerAudioProcessorEditor::refreshAnalysisCache()
 {
     const auto stamp = audioProcessor.currentAnalysisStamp();
     if (!hasCachedAnalysisStamp || !(stamp == cachedAnalysisStamp))
@@ -203,53 +223,9 @@ void CreativeSamplerAudioProcessorEditor::refreshAnalysisCache()
         cachedAnalysis = audioProcessor.currentAnalysisResult();
         cachedAnalysisStamp = stamp;
         hasCachedAnalysisStamp = true;
+        return true;
     }
-}
-
-void CreativeSamplerAudioProcessorEditor::drawWaveform(juce::Graphics& graphics,
-                                                         juce::Rectangle<float> bounds,
-                                                         const WaveformData& data,
-                                                         const SampleMetadata& metadata)
-{
-    if (data.levelCount() == 0 || metadata.sampleCount <= 0)
-        return;
-
-    const auto framesPerPixel = static_cast<double>(metadata.sampleCount) / bounds.getWidth();
-    const auto levelIndex = data.chooseLevel(framesPerPixel);
-    const auto& level = data.level(levelIndex);
-    const auto channelCount = juce::jmin(data.channelCount(), 2);
-    const auto channelCountF = static_cast<float>(channelCount);
-    graphics.setColour(juce::Colour(0xff343743));
-
-    for (int channel = 0; channel < channelCount; ++channel)
-    {
-        const auto channelBounds = bounds.withY(bounds.getY() + bounds.getHeight()
-                                                 * static_cast<float>(channel) / channelCountF)
-                                         .withHeight(bounds.getHeight() / channelCountF);
-        const auto centreY = channelBounds.getCentreY();
-        graphics.drawHorizontalLine(juce::roundToInt(centreY), channelBounds.getX(), channelBounds.getRight());
-
-        const auto& peaks = level.channels[static_cast<size_t>(channel)];
-        const auto pixels = juce::jmax(1, juce::roundToInt(channelBounds.getWidth()));
-        graphics.setColour(channel == 0 ? accent : juce::Colour(0xff68b8ff));
-        for (int x = 0; x < pixels; ++x)
-        {
-            const auto frame = static_cast<juce::int64>((static_cast<double>(x) / pixels)
-                                                        * static_cast<double>(metadata.sampleCount));
-            const auto peakIndex = static_cast<size_t>(juce::jlimit<juce::int64>(
-                0, static_cast<juce::int64>(peaks.size() - 1), frame / level.framesPerPeak));
-            const auto peak = peaks[peakIndex];
-            const auto top = centreY - peak.maximum * channelBounds.getHeight() * 0.46f;
-            const auto bottom = centreY - peak.minimum * channelBounds.getHeight() * 0.46f;
-            graphics.drawVerticalLine(juce::roundToInt(channelBounds.getX() + static_cast<float>(x)), top, bottom);
-        }
-    }
-
-    const auto position = audioProcessor.playbackPositionSeconds();
-    const auto proportion = juce::jlimit(0.0, 1.0, position / metadata.durationSeconds());
-    const auto x = bounds.getX() + static_cast<float>(proportion) * bounds.getWidth();
-    graphics.setColour(juce::Colour(0xffff6b91));
-    graphics.drawVerticalLine(juce::roundToInt(x), bounds.getY(), bounds.getBottom());
+    return false;
 }
 
 void CreativeSamplerAudioProcessorEditor::paint(juce::Graphics& graphics)
@@ -264,42 +240,7 @@ void CreativeSamplerAudioProcessorEditor::paint(juce::Graphics& graphics)
     graphics.drawText("CREATIVE SAMPLER", 42, 28, 380, 36, juce::Justification::centredLeft);
     graphics.setColour(muted);
     graphics.setFont(juce::FontOptions(12.0f));
-    graphics.drawText("SAMPLE PLAYER  /  BPM ANALYSIS", 42, 66, 360, 22, juce::Justification::centredLeft);
-
-    auto waveformBounds = getLocalBounds().toFloat().reduced(42.0f);
-    waveformBounds = { waveformBounds.getX(), 174.0f, waveformBounds.getWidth(),
-                       juce::jmax(110.0f, static_cast<float>(getHeight()) - 292.0f) };
-    graphics.setColour(juce::Colour(0xff13151b));
-    graphics.fillRoundedRectangle(waveformBounds, 12.0f);
-    graphics.setColour(juce::Colour(0xff383b47));
-    graphics.drawRoundedRectangle(waveformBounds, 12.0f, 1.0f);
-
-    const auto waveform = audioProcessor.currentWaveform();
-    const auto& sample = audioProcessor.currentSampleMetadata();
-    if (waveform != nullptr && sample.has_value())
-    {
-        drawWaveform(graphics, waveformBounds.reduced(12.0f), *waveform, *sample);
-        if (cachedAnalysis.transients && sample->sampleCount > 0)
-        {
-            const auto& events = cachedAnalysis.transients->positions;
-            const auto stride = juce::jmax<size_t>(1, (events.size() + 1999) / 2000);
-            const auto markerBounds = waveformBounds.reduced(12.0f);
-            graphics.setColour(juce::Colour(0xffffb45f).withAlpha(0.88f));
-            for (size_t i = 0; i < events.size(); i += stride)
-            {
-                const auto proportion = juce::jlimit(0.0, 1.0, events[i].normalizedPosition);
-                const auto x = markerBounds.getX() + static_cast<float>(proportion) * markerBounds.getWidth();
-                graphics.drawVerticalLine(juce::roundToInt(x), markerBounds.getY(), markerBounds.getBottom());
-            }
-        }
-    }
-    else
-    {
-        graphics.setColour(muted);
-        graphics.setFont(juce::FontOptions(16.0f));
-        graphics.drawText("Import or drop a WAV / AIFF file", waveformBounds.toNearestInt().reduced(18),
-                          juce::Justification::centred);
-    }
+    graphics.drawText("SAMPLE PLAYER  /  SLICE EDITOR", 42, 66, 360, 22, juce::Justification::centredLeft);
 }
 
 void CreativeSamplerAudioProcessorEditor::resized()
@@ -309,8 +250,13 @@ void CreativeSamplerAudioProcessorEditor::resized()
     metadataLabel.setBounds(42, 126, getWidth() - 84, 22);
     statusLabel.setBounds(42, getHeight() - 50, getWidth() - 84, 24);
 
+    waveformEditor.setBounds(42, 174, getWidth() - 84,
+                             juce::jmax(120, getHeight() - 300));
     const auto controlY = getHeight() - 100;
     playButton.setBounds(42, controlY, 86, 42);
     stopButton.setBounds(138, controlY, 86, 42);
-    volumeSlider.setBounds(252, controlY + 4, getWidth() - 294, 34);
+    splitButton.setBounds(242, controlY, 74, 42);
+    deleteSliceButton.setBounds(324, controlY, 82, 42);
+    resetSlicesButton.setBounds(414, controlY, 74, 42);
+    volumeSlider.setBounds(506, controlY + 4, getWidth() - 548, 34);
 }

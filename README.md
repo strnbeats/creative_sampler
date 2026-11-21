@@ -109,3 +109,29 @@ UI показывает число транзиентов и рисует мак
 На синтетических проверках осталось 16/16 исходных положительных событий. На шумовом фоне найдено 8/9 атак против 6/9, а на двух 30-секундных розовых шумах число ложных маркеров снизилось с 51 и 50 до нуля. Одна тихая двухтональная атака маскируется шумом. Маркеры вблизи краёв файла могут отбрасываться из-за неполного контекста. Точность на реальных записях пока не измерялась.
 
 Рабочие массивы признаков используют 64 байта на кадр. Дополнительно учитывается ёмкость списка кандидатов. Оценка для 180 секунд составляет около 12,1 МБ без аудиобуфера, памяти FFT и опубликованных событий. Прогоны доступны через `CreativeSamplerTests --transient-benchmark` и `CreativeSamplerTests --transient-test`.
+
+## Phase 3A — Slice Engine foundation
+
+`SliceEngine` — независимая message-thread модель, привязанная к уникальному Sample ID и числу исходных samples. При новой загрузке прежняя коллекция заменяется; короткий Sample может быть привязан с пустой коллекцией. Slice использует точный half-open интервал `[startSample, endSample)`, стабильный ID и порядок по начальной позиции. Минимальная длина — 64 sample frames. Пересечения запрещены; gaps допустимы после удаления или при создании диапазона в свободной части Sample.
+
+Выделение диапазона мышью создаёт slice: внутри существующего диапазона оно разделяет родительский slice на левую, выбранную и правую части. Split делит выбранный slice пополам; Delete удаляет его и оставляет явный gap; Reset создаёт один slice на весь Sample. Перетаскивание общей границы двух соприкасающихся slices синхронно меняет конец левого и начало правого; при этом проверяется минимальная длина обоих. Границы у Sample и соседних slices валидируются в sample domain. Изменения масштаба и размера окна не меняют координаты.
+
+Редактируемая коллекция и выбранный slice не читаются `processBlock()`. Текущие операции выполняются на message thread. Playback получает отдельный immutable snapshot с Sample ID, revision, sample-domain границами и MIDI note map.
+
+Waveform перенесён в самостоятельный `WaveformEditorComponent`: компонент рисует существующие multiresolution peaks, selection, sample-domain boundaries, playback position и transient markers; поддерживает выбор slice, drag для создания диапазона, drag boundaries, Split, Delete и Reset. Waveform data не пересчитывается при repaint. Полноценные zoom/scroll, автоматические slicing modes и сохранение slice state пока не реализованы.
+
+## Phase 3B — Slice Playback foundation
+
+`SlicePlaybackSnapshot` строится на message thread из `SliceEngine` и удерживает тот же `SampleHandle`, не копируя аудиобуфер. Проверяются Sample ID, revision, sample rate и непересекающиеся интервалы `[startSample, endSample)`. По умолчанию slice получает MIDI note от C4 вверх по мере выдачи ID (назначения повторяются после MIDI note 127); для дальнейшей mapping UI модель предоставляет `setMidiNote()`.
+
+Processor публикует новый snapshot при импорте Sample и после изменения SliceEngine. Audio thread забирает сырой указатель из атомарного pending slot. Snapshot, заменённый до получения, можно уничтожить на message thread; опубликованный владеется audio engine. Старый snapshot помещается в фиксированную SPSC retirement queue только когда ни один голос его не использует. Если очередь заполнена, движок сохраняет ожидающую замену и повторяет её позже; память не освобождается в `processBlock()`. Timer Processor освобождает retired snapshots на message thread. Каждый голос содержит только фиксированное состояние и заимствует указатель на snapshot, чей владелец удерживается движком до завершения голоса.
+
+`SliceVoice` воспроизводит только назначенный half-open диапазон через существующий windowed-sinc resampler с tap clamping на границе slice. Скорость учитывает отношение sample rate и MIDI pitch относительно C4; velocity масштабирует голос. Начало, Note Off и естественный конец имеют короткий линейный ramp. `SlicePlaybackEngine` обрабатывает MIDI в порядке sample offset, поддерживает до 16 голосов и при заполнении пула заменяет самый старый голос. При одновременном суммировании голосов и основного Sample сигнал усредняется по числу активных слоёв; standalone UI показывает MIDI note на достаточно широких slice labels. Полноценная mapping UI, ADSR, MIDI-channel zones, reverse и voice modes не входят в этот этап.
+
+### UI technology audit
+
+Для текущего waveform editor выбран **Native JUCE**. Он переиспользует существующий plugin UI и даёт прямой message-thread hit-testing/drag без browser bridge. Сотни границ не требуют WebGL: их число мало по сравнению с waveform peaks, а waveform уже рисуется на уровне экранных пикселей. Пользовательские компоненты и input-логика остаются в C++.
+
+WebView даёт быстрый CSS/SVG/Canvas/WebGL workflow и богатый набор web tooling, но требует отдельного JS↔C++ контракта, встраивания frontend ресурсов и платформенной валидации. В JUCE backend зависит от платформы; Windows WebView2 настраивается отдельно и требует учесть наличие и распространение runtime. Это увеличивает packaging и host-compatibility работу для VST3/Standalone.
+
+Hybrid имеет смысл только при наличии конкретных web-first экранов. Если позднее появятся сложные динамические панели, можно оставить аудио, параметры и waveform interaction в Native JUCE, а независимые информационные панели рассмотреть для WebView. Для этого SliceEngine уже отделён от компонентов интерфейса; текущие view callbacks не являются частью модели.

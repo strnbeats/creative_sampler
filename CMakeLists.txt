@@ -39,11 +39,16 @@ target_sources(CreativeSampler PRIVATE
     src/analysis/TransientAnalyzer.cpp
     src/dsp/BandlimitedResampler.cpp
     src/sample/SampleStorage.cpp
+    src/slice/SliceEngine.cpp
     src/import/AudioImportService.cpp
     src/playback/SamplePlaybackEngine.cpp
+    src/playback/SlicePlaybackSnapshot.cpp
+    src/playback/SliceVoice.cpp
+    src/playback/SlicePlaybackEngine.cpp
     src/waveform/WaveformData.cpp
     src/plugin/PluginProcessor.cpp
     src/plugin/PluginEditor.cpp
+    src/ui/WaveformEditorComponent.cpp
 )
 
 target_include_directories(CreativeSampler PRIVATE src)
@@ -74,6 +79,8 @@ if (BUILD_TESTING)
         tests/BPMAnalyzerTests.cpp
         tests/KeyAnalyzerTests.cpp
         tests/TransientAnalyzerTests.cpp
+        tests/SliceEngineTests.cpp
+        tests/SlicePlaybackEngineTests.cpp
         tests/SampleEngineTests.cpp
         src/analysis/AnalysisCoordinator.cpp
         src/analysis/AnalysisTypes.cpp
@@ -82,8 +89,12 @@ if (BUILD_TESTING)
         src/analysis/TransientAnalyzer.cpp
         src/dsp/BandlimitedResampler.cpp
         src/sample/SampleStorage.cpp
+        src/slice/SliceEngine.cpp
         src/import/AudioImportService.cpp
         src/playback/SamplePlaybackEngine.cpp
+        src/playback/SlicePlaybackSnapshot.cpp
+        src/playback/SliceVoice.cpp
+        src/playback/SlicePlaybackEngine.cpp
         src/waveform/WaveformData.cpp
     )
     target_include_directories(CreativeSamplerTests PRIVATE src)

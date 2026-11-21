@@ -70,11 +70,24 @@ float BandlimitedResampler::interpolate(const float* source, int sourceLength,
                                         double sourcePosition,
                                         double sourceFramesPerOutputFrame) const noexcept
 {
-    if (source == nullptr || sourceLength <= 0 || !std::isfinite(sourcePosition))
+    return interpolateRange(source, sourceLength, 0, sourceLength, sourcePosition,
+                            sourceFramesPerOutputFrame);
+}
+
+float BandlimitedResampler::interpolateRange(const float* source, int sourceLength,
+                                             int sourceStart, int sourceEndExclusive,
+                                             double sourcePosition,
+                                             double sourceFramesPerOutputFrame) const noexcept
+{
+    if (source == nullptr || sourceLength <= 0 || sourceStart < 0
+        || sourceEndExclusive > sourceLength || sourceEndExclusive <= sourceStart
+        || !std::isfinite(sourcePosition))
         return 0.0f;
 
-    const auto clampedPosition = std::clamp(sourcePosition, 0.0,
-                                             static_cast<double>(sourceLength - 1));
+    const auto firstSample = sourceStart;
+    const auto lastSample = sourceEndExclusive - 1;
+    const auto clampedPosition = std::clamp(sourcePosition, static_cast<double>(firstSample),
+                                             static_cast<double>(lastSample));
     auto centre = static_cast<int>(clampedPosition);
     const auto fraction = clampedPosition - static_cast<double>(centre);
     const auto roundedPhase = static_cast<int>(fraction * phaseCount + 0.5);
@@ -94,7 +107,7 @@ float BandlimitedResampler::interpolate(const float* source, int sourceLength,
     auto output = 0.0f;
     for (int tap = 0; tap < tapCount; ++tap)
     {
-        const auto sourceIndex = std::clamp(centre + tap - halfTapCount, 0, sourceLength - 1);
+        const auto sourceIndex = std::clamp(centre + tap - halfTapCount, firstSample, lastSample);
         output += source[sourceIndex] * coefficients[tableOffset + static_cast<std::size_t>(tap)];
     }
     return output;

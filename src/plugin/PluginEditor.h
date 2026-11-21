@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
+#include "../ui/WaveformEditorComponent.h"
 
 class CreativeSamplerAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                                    private juce::FileDragAndDropTarget,
@@ -17,15 +18,17 @@ public:
 
 private:
     void timerCallback() override;
-    void refreshAnalysisCache();
-    void drawWaveform(juce::Graphics& graphics, juce::Rectangle<float> bounds,
-                      const WaveformData& data, const SampleMetadata& metadata);
+    bool refreshAnalysisCache();
     void openFileChooser();
 
     CreativeSamplerAudioProcessor& audioProcessor;
     juce::TextButton importButton { "IMPORT" };
     juce::TextButton playButton { "PLAY" };
     juce::TextButton stopButton { "STOP" };
+    juce::TextButton splitButton { "SPLIT" };
+    juce::TextButton deleteSliceButton { "DELETE" };
+    juce::TextButton resetSlicesButton { "RESET" };
+    WaveformEditorComponent waveformEditor;
     juce::Slider volumeSlider;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> volumeAttachment;
     juce::Label sampleNameLabel;

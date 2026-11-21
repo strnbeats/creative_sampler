@@ -3,6 +3,8 @@
 #include "BPMAnalyzerTests.h"
 #include "KeyAnalyzerTests.h"
 #include "SampleEngineTests.h"
+#include "SliceEngineTests.h"
+#include "SlicePlaybackEngineTests.h"
 #include "TransientAnalyzerTests.h"
 
 int main(int argc, char** argv)
@@ -33,6 +35,8 @@ int main(int argc, char** argv)
     tests.add(getBPMAnalyzerTest());
     tests.add(getKeyAnalyzerTest());
     tests.add(getTransientAnalyzerTest());
+    tests.add(getSliceEngineTest());
+    tests.add(getSlicePlaybackEngineTest());
     tests.add(getSampleEngineTest());
     runner.runTests(tests);
 
