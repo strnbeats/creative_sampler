@@ -138,8 +138,13 @@ std::optional<SliceId> SliceEngine::createSlice(std::int64_t startSample, std::i
     {
         replacement.reserve(static_cast<size_t>((leftLength > 0) + 1 + (rightLength > 0)));
         if (leftLength > 0)
-            replacement.push_back(makeSlice(original.id, original.startSample, startSample));
+        {
+            auto left = makeSlice(original.id, original.startSample, startSample);
+            left.parameters = original.parameters;
+            replacement.push_back(left);
+        }
         auto created = makeSlice(createdId, startSample, endSample);
+        created.parameters = original.parameters;
         if (createdId == original.id)
             created.midiNote = original.midiNote;
         replacement.push_back(created);
@@ -148,7 +153,9 @@ std::optional<SliceId> SliceEngine::createSlice(std::int64_t startSample, std::i
             const auto rightId = allocateId();
             if (rightId == 0)
                 return std::nullopt;
-            replacement.push_back(makeSlice(rightId, endSample, original.endSample));
+            auto right = makeSlice(rightId, endSample, original.endSample);
+            right.parameters = original.parameters;
+            replacement.push_back(right);
         }
         sliceList.reserve(sliceList.size() + replacement.size() - 1);
     }
@@ -174,14 +181,15 @@ std::optional<SliceId> SliceEngine::splitSlice(SliceId id, std::int64_t splitSam
         return std::nullopt;
 
     const auto index = static_cast<size_t>(std::distance(sliceList.begin(), found));
-    const auto originalEnd = found->endSample;
+    const auto original = *found;
     const auto rightId = allocateId();
     if (rightId == 0)
         return std::nullopt;
     try
     {
-        sliceList.insert(sliceList.begin() + static_cast<std::ptrdiff_t>(index + 1),
-                     makeSlice(rightId, splitSample, originalEnd));
+        auto right = makeSlice(rightId, splitSample, original.endSample);
+        right.parameters = original.parameters;
+        sliceList.insert(sliceList.begin() + static_cast<std::ptrdiff_t>(index + 1), right);
     }
     catch (const std::bad_alloc&)
     {
@@ -259,6 +267,19 @@ bool SliceEngine::setMidiNote(SliceId id, int midiNote) noexcept
     return true;
 }
 
+bool SliceEngine::setParameters(SliceId id, const SliceParameters& parameters) noexcept
+{
+    if (!parameters.isValid())
+        return false;
+    const auto found = std::find_if(sliceList.begin(), sliceList.end(),
+        [id](const Slice& slice) { return slice.id == id; });
+    if (found == sliceList.end() || found->parameters == parameters)
+        return false;
+    found->parameters = parameters;
+    ++stateRevision;
+    return true;
+}
+
 const Slice* SliceEngine::find(SliceId id) const noexcept
 {
     const auto found = std::find_if(sliceList.begin(), sliceList.end(),
@@ -277,6 +298,7 @@ bool SliceEngine::isValid() const noexcept
     {
         const auto& slice = sliceList[i];
         if (slice.id == 0 || slice.midiNote < 0 || slice.midiNote > 127
+            || !slice.parameters.isValid()
             || slice.startSample < 0 || slice.endSample <= slice.startSample
             || slice.endSample > sourceSampleCount || slice.endSample - slice.startSample < minimumLength
             || (!first && slice.startSample < previousEnd))

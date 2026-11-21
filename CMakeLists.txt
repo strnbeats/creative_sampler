@@ -6,6 +6,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_program(NPM_EXECUTABLE npm REQUIRED)
+execute_process(COMMAND ${NPM_EXECUTABLE} run build
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/web-ui"
+    RESULT_VARIABLE WEB_UI_BUILD_RESULT)
+if (NOT WEB_UI_BUILD_RESULT EQUAL 0)
+    message(FATAL_ERROR "Creative Sampler Web UI production build failed")
+endif()
+
 # JUCE can be supplied either as an installed CMake package or as a source tree.
 if (DEFINED JUCE_SOURCE_DIR AND EXISTS "${JUCE_SOURCE_DIR}/CMakeLists.txt")
     add_subdirectory("${JUCE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE")
@@ -25,9 +33,12 @@ juce_add_plugin(CreativeSampler
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
+    NEEDS_WEBVIEW2 TRUE
     IS_MIDI_EFFECT FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
 )
+
+juce_add_binary_data(CreativeSamplerWebUI SOURCES web-ui/dist/index.html)
 
 juce_generate_juce_header(CreativeSampler)
 
@@ -38,6 +49,7 @@ target_sources(CreativeSampler PRIVATE
     src/analysis/KeyAnalyzer.cpp
     src/analysis/TransientAnalyzer.cpp
     src/dsp/BandlimitedResampler.cpp
+    src/dsp/ADSREnvelope.cpp
     src/sample/SampleStorage.cpp
     src/slice/SliceEngine.cpp
     src/import/AudioImportService.cpp
@@ -48,20 +60,23 @@ target_sources(CreativeSampler PRIVATE
     src/waveform/WaveformData.cpp
     src/plugin/PluginProcessor.cpp
     src/plugin/PluginEditor.cpp
+    src/ui/SliceParametersPanel.cpp
     src/ui/WaveformEditorComponent.cpp
 )
 
 target_include_directories(CreativeSampler PRIVATE src)
 target_compile_definitions(CreativeSampler PUBLIC
-    JUCE_WEB_BROWSER=0
+    JUCE_WEB_BROWSER=1
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
 )
 
 target_link_libraries(CreativeSampler PRIVATE
+    CreativeSamplerWebUI
     juce::juce_audio_utils
     juce::juce_audio_processors
     juce::juce_gui_basics
+    juce::juce_gui_extra
     juce::juce_dsp
     PUBLIC
     juce::juce_recommended_config_flags
@@ -74,6 +89,8 @@ if (BUILD_TESTING)
     juce_add_console_app(CreativeSamplerTests PRODUCT_NAME "Creative Sampler Tests")
     juce_generate_juce_header(CreativeSamplerTests)
     target_sources(CreativeSamplerTests PRIVATE
+        src/ui/SliceParametersPanel.cpp
+        tests/SliceParametersPanelTests.cpp
         tests/TestMain.cpp
         tests/AnalysisInfrastructureTests.cpp
         tests/BPMAnalyzerTests.cpp
@@ -81,6 +98,7 @@ if (BUILD_TESTING)
         tests/TransientAnalyzerTests.cpp
         tests/SliceEngineTests.cpp
         tests/SlicePlaybackEngineTests.cpp
+        tests/ADSREnvelopeTests.cpp
         tests/SampleEngineTests.cpp
         src/analysis/AnalysisCoordinator.cpp
         src/analysis/AnalysisTypes.cpp
@@ -88,6 +106,7 @@ if (BUILD_TESTING)
         src/analysis/KeyAnalyzer.cpp
         src/analysis/TransientAnalyzer.cpp
         src/dsp/BandlimitedResampler.cpp
+        src/dsp/ADSREnvelope.cpp
         src/sample/SampleStorage.cpp
         src/slice/SliceEngine.cpp
         src/import/AudioImportService.cpp
@@ -100,6 +119,7 @@ if (BUILD_TESTING)
     target_include_directories(CreativeSamplerTests PRIVATE src)
     target_compile_definitions(CreativeSamplerTests PRIVATE JUCE_UNIT_TESTS=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(CreativeSamplerTests PRIVATE
+        juce::juce_gui_basics
         juce::juce_audio_formats
         juce::juce_audio_basics
         juce::juce_dsp

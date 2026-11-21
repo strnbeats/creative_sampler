@@ -33,7 +33,8 @@ std::unique_ptr<const SlicePlaybackSnapshot> SlicePlaybackSnapshot::create(
             if (slice.midiNote < 0 || slice.midiNote >= midiNoteCount)
                 return nullptr;
             const auto index = regions.size();
-            regions.push_back({ slice.id, slice.startSample, slice.endSample, slice.midiNote });
+            regions.push_back({ slice.id, slice.startSample, slice.endSample,
+                                slice.midiNote, slice.parameters });
             noteMap[static_cast<std::size_t>(slice.midiNote)].push_back(index);
         }
 
@@ -69,6 +70,7 @@ bool SlicePlaybackSnapshot::isValid() const noexcept
     for (const auto& region : sliceRegions)
     {
         if (region.id == 0 || region.midiNote < 0 || region.midiNote >= midiNoteCount
+            || !region.parameters.isValid()
             || region.startSample < 0 || region.endSample <= region.startSample
             || region.endSample > sampleCount || region.startSample < previousEnd)
             return false;

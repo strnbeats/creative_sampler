@@ -22,6 +22,8 @@ public:
     bool canSplitSelectedAtMidpoint() const noexcept;
     bool deleteSelectedSlice();
     bool resetSlices();
+    SliceId selectedId() const noexcept { return selectedSlice.value_or(0); }
+    void selectSlice(SliceId id) { chooseSlice(id); }
 
     void paint(juce::Graphics& graphics) override;
     void mouseMove(const juce::MouseEvent& event) override;

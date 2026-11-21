@@ -1,2 +1,5 @@
 /build/
 .DS_Store
+/web-ui/node_modules/
+/web-ui/dist/
+/web-ui/*.tsbuildinfo

@@ -2,6 +2,21 @@
 #include <algorithm>
 #include <cmath>
 
+void SliceVoice::prepare(double sampleRate) noexcept
+{
+    outputRate = std::isfinite(sampleRate) && sampleRate > 0.0 ? sampleRate : 44100.0;
+    reset();
+    (void) envelope.prepare(outputRate);
+}
+
+void SliceVoice::reset() noexcept
+{
+    active = false;
+    sourceSnapshot = nullptr;
+    voiceMidiNote = -1;
+    sliceEndReleaseStarted = false;
+}
+
 bool SliceVoice::start(const SlicePlaybackSnapshot* snapshot, std::size_t regionIndex,
                        int midiNote, int velocity, double outputSampleRate,
                        std::uint64_t startFrame) noexcept
@@ -15,10 +30,19 @@ bool SliceVoice::start(const SlicePlaybackSnapshot* snapshot, std::size_t region
     const auto& region = snapshot->regions()[regionIndex];
     if (region.startSample < 0 || region.endSample <= region.startSample
         || region.endSample > sample.audio().getNumSamples()
+        || !region.parameters.isValid()
         || !std::isfinite(sample.metadata().sampleRate) || sample.metadata().sampleRate <= 0.0)
         return false;
-    const auto semitones = juce::jlimit(-48, 48, midiNote - SlicePlaybackSnapshot::pitchReferenceNote);
-    const auto pitchRatio = std::exp2(static_cast<double>(semitones) / 12.0);
+    if (envelope.preparedSampleRate() <= 0.0
+        || std::abs(outputRate - outputSampleRate) > 0.001)
+        prepare(outputSampleRate);
+    if (!envelope.setParameters(region.parameters.envelope))
+        return false;
+
+    const auto semitones = juce::jlimit(-48.0, 48.0,
+        static_cast<double>(midiNote - SlicePlaybackSnapshot::pitchReferenceNote)
+            + static_cast<double>(region.parameters.pitchSemitones));
+    const auto pitchRatio = std::exp2(semitones / 12.0);
     const auto step = sample.metadata().sampleRate / outputSampleRate * pitchRatio;
     if (!std::isfinite(step) || step <= 0.0)
         return false;
@@ -29,17 +53,31 @@ bool SliceVoice::start(const SlicePlaybackSnapshot* snapshot, std::size_t region
     sourceStep = step;
     outputRate = outputSampleRate;
     velocityGain = static_cast<float>(velocity) / 127.0f;
-    envelope = 0.0f;
+    sliceVolume = region.parameters.volume;
     voiceMidiNote = midiNote;
     voiceStartFrame = startFrame;
     active = true;
-    releaseStarted = false;
+    sliceEndReleaseStarted = false;
 
-    const auto outputLength = static_cast<double>(region.endSample - region.startSample) / step;
-    const auto attackFrames = juce::jmax(1, juce::roundToInt(
-        std::min(outputRate * 0.003, outputLength * 0.2)));
-    naturalReleaseFrames = std::max(1.0, std::min(outputRate * 0.005, outputLength * 0.2));
-    beginRamp(1.0f, attackFrames);
+    constexpr auto halfPi = 1.57079632679489661923;
+    const auto pan = static_cast<double>(region.parameters.pan);
+    if (sample.audio().getNumChannels() == 1)
+    {
+        const auto angle = (pan + 1.0) * halfPi * 0.5;
+        leftPanGain = static_cast<float>(std::cos(angle));
+        rightPanGain = static_cast<float>(std::sin(angle));
+    }
+    else if (pan < 0.0)
+    {
+        leftPanGain = 1.0f;
+        rightPanGain = static_cast<float>(std::cos(-pan * halfPi));
+    }
+    else
+    {
+        leftPanGain = static_cast<float>(std::cos(pan * halfPi));
+        rightPanGain = 1.0f;
+    }
+    envelope.noteOn();
     return true;
 }
 
@@ -47,16 +85,18 @@ void SliceVoice::noteOff() noexcept
 {
     if (!active)
         return;
-    releaseStarted = true;
-    beginRamp(0.0f, juce::jmax(1, juce::roundToInt(outputRate * 0.005)));
+    envelope.noteOff();
 }
 
 bool SliceVoice::renderFrame(float& left, float& right) noexcept
 {
     left = 0.0f;
     right = 0.0f;
-    if (!active || sourceSnapshot == nullptr)
+    if (!active || sourceSnapshot == nullptr || !envelope.isActive())
+    {
+        reset();
         return false;
+    }
 
     const auto& sample = sourceSnapshot->sample();
     const auto& audio = sample.audio();
@@ -69,11 +109,8 @@ bool SliceVoice::renderFrame(float& left, float& right) noexcept
         voiceMidiNote = -1;
         return false;
     }
-    if (!releaseStarted && remaining <= naturalReleaseFrames)
-    {
-        releaseStarted = true;
-        beginRamp(0.0f, juce::jmax(1, juce::roundToInt(remaining)));
-    }
+    const auto endSafetyFrames = std::max(1.0, outputRate * 0.005);
+    const auto beginSliceEndRelease = !sliceEndReleaseStarted && remaining <= endSafetyFrames;
 
     const auto* first = audio.getReadPointer(0);
     const auto firstValue = resampler.interpolateRange(first, audio.getNumSamples(),
@@ -85,44 +122,29 @@ bool SliceVoice::renderFrame(float& left, float& right) noexcept
             static_cast<int>(region.startSample), static_cast<int>(region.endSample),
             sourcePosition, sourceStep);
 
-    const auto amplitude = envelope * velocityGain;
+    const auto envelopeValue = envelope.nextSample();
+    if (beginSliceEndRelease)
+    {
+        const auto boundedFrames = static_cast<std::uint64_t>(
+            juce::jmax(1.0, std::ceil(remaining)));
+        envelope.finishWithinFrames(boundedFrames > 0 ? boundedFrames - 1 : 0);
+        sliceEndReleaseStarted = true;
+    }
+    const auto amplitude = envelopeValue * velocityGain * sliceVolume;
     if (audio.getNumChannels() == 1)
     {
-        left = firstValue * amplitude;
-        right = left;
+        left = firstValue * amplitude * leftPanGain;
+        right = firstValue * amplitude * rightPanGain;
     }
     else
     {
-        left = firstValue * amplitude;
-        right = secondValue * amplitude;
+        left = firstValue * amplitude * leftPanGain;
+        right = secondValue * amplitude * rightPanGain;
     }
 
     sourcePosition += sourceStep;
-    advanceRamp();
     const auto reachedEnd = sourcePosition >= static_cast<double>(region.endSample);
-    const auto releasedToZero = releaseStarted && rampRemaining == 0 && rampTarget <= 0.0f;
-    if (reachedEnd || releasedToZero)
-    {
-        active = false;
-        sourceSnapshot = nullptr;
-        voiceMidiNote = -1;
-    }
+    if (reachedEnd || !envelope.isActive())
+        reset();
     return true;
-}
-
-void SliceVoice::beginRamp(float target, int frames) noexcept
-{
-    rampTarget = target;
-    rampRemaining = juce::jmax(1, frames);
-    rampIncrement = (rampTarget - envelope) / static_cast<float>(rampRemaining);
-}
-
-void SliceVoice::advanceRamp() noexcept
-{
-    if (rampRemaining <= 0)
-        return;
-    envelope += rampIncrement;
-    --rampRemaining;
-    if (rampRemaining == 0)
-        envelope = rampTarget;
 }

@@ -29,9 +29,12 @@ void SlicePlaybackEngine::prepare(double sampleRate) noexcept
 {
     if (std::isfinite(sampleRate) && sampleRate > 0.0)
         outputRate = sampleRate;
+    for (auto& voice : voices)
+        voice.prepare(outputRate);
     volumeSmoother.reset(outputRate, 0.005);
     volumeSmoother.setCurrentAndTargetValue(requestedVolume.load(std::memory_order_relaxed));
-    stopVoices();
+    stopRequested.store(false, std::memory_order_relaxed);
+    lastPublishedVoiceCount.store(0, std::memory_order_relaxed);
 }
 
 void SlicePlaybackEngine::setCurrentSampleId(std::uint64_t sampleId) noexcept

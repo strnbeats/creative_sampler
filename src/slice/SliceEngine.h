@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <vector>
+#include "SliceParameters.h"
 
 using SliceId = std::uint64_t;
 
@@ -13,6 +14,7 @@ struct Slice
     std::int64_t startSample = 0;
     std::int64_t endSample = 0;
     int midiNote = 60;
+    SliceParameters parameters {};
 
     std::int64_t length() const noexcept { return endSample - startSample; }
 };
@@ -43,6 +45,7 @@ public:
     bool deleteSlice(SliceId id) noexcept;
     bool moveBoundary(SliceId id, SliceBoundary boundary, std::int64_t samplePosition) noexcept;
     bool setMidiNote(SliceId id, int midiNote) noexcept;
+    bool setParameters(SliceId id, const SliceParameters& parameters) noexcept;
 
     const std::vector<Slice>& slices() const noexcept { return sliceList; }
     const Slice* find(SliceId id) const noexcept;

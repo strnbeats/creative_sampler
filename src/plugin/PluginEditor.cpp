@@ -1,5 +1,7 @@
 #include "PluginEditor.h"
 #include <algorithm>
+#include <BinaryData.h>
+#include <cstring>
 
 namespace
 {
@@ -85,11 +87,12 @@ juce::String makeAnalysisStatusText(const AnalysisResult& result)
 CreativeSamplerAudioProcessorEditor::CreativeSamplerAudioProcessorEditor(
     CreativeSamplerAudioProcessor& processorRef)
     : AudioProcessorEditor(&processorRef), audioProcessor(processorRef),
-      waveformEditor(processorRef.sliceEngineForUi())
+      waveformEditor(processorRef.sliceEngineForUi()),
+      parametersPanel(processorRef.sliceEngineForUi(), [this] { return waveformEditor.selectedId(); })
 {
-    setSize(900, 560);
+    setSize(900, 686);
     setResizable(true, true);
-    setResizeLimits(680, 440, 1600, 1000);
+    setResizeLimits(680, 566, 1600, 1000);
 
     for (auto* button : { &importButton, &playButton, &stopButton,
                           &splitButton, &deleteSliceButton, &resetSlicesButton })
@@ -107,6 +110,7 @@ CreativeSamplerAudioProcessorEditor::CreativeSamplerAudioProcessorEditor(
     deleteSliceButton.onClick = [this] { (void) waveformEditor.deleteSelectedSlice(); };
     resetSlicesButton.onClick = [this] { (void) waveformEditor.resetSlices(); };
     addAndMakeVisible(waveformEditor);
+    addAndMakeVisible(parametersPanel);
 
     volumeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     volumeSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 56, 24);
@@ -129,6 +133,78 @@ CreativeSamplerAudioProcessorEditor::CreativeSamplerAudioProcessorEditor(
     volumeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.parameterState(), "volume", volumeSlider);
 
+    auto options = juce::WebBrowserComponent::Options {}
+        .withNativeIntegrationEnabled()
+        .withNativeFunction("getState", [this](const juce::Array<juce::var>&,
+                                                 juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            done(webViewState());
+        })
+        .withNativeFunction("selectSlice", [this](const juce::Array<juce::var>& args,
+                                                    juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            if (args.size() > 0)
+                waveformEditor.selectSlice(static_cast<SliceId>(static_cast<juce::int64>(args[0])));
+            done(webViewState());
+        })
+        .withNativeFunction("editParameter", [this](const juce::Array<juce::var>& args,
+                                                      juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            auto& engine = audioProcessor.sliceEngineForUi();
+            if (args.size() >= 3)
+            {
+                const auto id = static_cast<SliceId>(static_cast<juce::int64>(args[0]));
+                const auto name = args[1].toString();
+                const auto value = static_cast<float>(args[2]);
+                auto field = name == "volume" ? std::optional<SliceField>(SliceField::volume)
+                    : name == "pan" ? std::optional<SliceField>(SliceField::pan) : std::nullopt;
+                if (field)
+                    (void) editSliceField(engine, engine.sampleId(), id, *field, value);
+            }
+            done(webViewState());
+        })
+        .withNativeFunction("importSample", [this](const juce::Array<juce::var>&,
+                                                      juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            openFileChooser();
+            done(webViewState());
+        })
+        .withNativeFunction("playSample", [this](const juce::Array<juce::var>&,
+                                                   juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            audioProcessor.playSample();
+            done(webViewState());
+        })
+        .withNativeFunction("stopSample", [this](const juce::Array<juce::var>&,
+                                                   juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            audioProcessor.stopSample();
+            done(webViewState());
+        })
+        .withResourceProvider([](const juce::String& path) -> std::optional<juce::WebBrowserComponent::Resource>
+        {
+            juce::ignoreUnused(path);
+            int size = 0;
+            const auto* data = BinaryData::getNamedResource("index_html", size);
+            if (data == nullptr || size <= 0)
+                return std::nullopt;
+            juce::WebBrowserComponent::Resource resource;
+            resource.mimeType = "text/html";
+            resource.data.resize(static_cast<size_t>(size));
+            std::memcpy(resource.data.data(), data, static_cast<size_t>(size));
+            return resource;
+        });
+#if JUCE_WINDOWS
+    options = options.withBackend(juce::WebBrowserComponent::Options::Backend::webview2)
+        .withWinWebView2Options(juce::WebBrowserComponent::Options::WinWebView2 {}
+            .withUserDataFolder(juce::File::getSpecialLocation(juce::File::tempDirectory)
+                .getChildFile("CreativeSamplerWebView")));
+#endif
+    webView = std::make_unique<juce::WebBrowserComponent>(options);
+    addAndMakeVisible(*webView);
+    webView->toFront(false);
+    loadWebUi();
+
     for (auto* label : { &sampleNameLabel, &metadataLabel, &statusLabel })
     {
         label->setColour(juce::Label::textColourId, foreground);
@@ -142,6 +218,8 @@ CreativeSamplerAudioProcessorEditor::CreativeSamplerAudioProcessorEditor(
     statusLabel.setFont(juce::FontOptions(13.0f));
     timerCallback();
     startTimerHz(30);
+    resized();
+    webView->toFront(false);
 }
 
 CreativeSamplerAudioProcessorEditor::~CreativeSamplerAudioProcessorEditor()
@@ -179,6 +257,7 @@ void CreativeSamplerAudioProcessorEditor::timerCallback()
     const auto analysisChanged = refreshAnalysisCache();
     const auto sampleId = audioProcessor.sliceEngineForUi().sampleId();
     waveformEditor.setSource(audioProcessor.currentWaveform(), audioProcessor.currentSampleMetadata(), sampleId);
+    parametersPanel.refresh();
     if (analysisChanged)
     {
         const auto currentAnalysis = cachedAnalysis.identity.sampleId == sampleId;
@@ -213,6 +292,7 @@ void CreativeSamplerAudioProcessorEditor::timerCallback()
         metadataLabel.setText("WAV and AIFF  /  mono or stereo", juce::dontSendNotification);
     }
     repaint();
+
 }
 
 bool CreativeSamplerAudioProcessorEditor::refreshAnalysisCache()
@@ -245,13 +325,19 @@ void CreativeSamplerAudioProcessorEditor::paint(juce::Graphics& graphics)
 
 void CreativeSamplerAudioProcessorEditor::resized()
 {
+    if (webView != nullptr)
+    {
+        webView->setBounds(getLocalBounds());
+        webView->toFront(false);
+    }
     importButton.setBounds(getWidth() - 164, 38, 122, 40);
     sampleNameLabel.setBounds(42, 96, getWidth() - 84, 28);
     metadataLabel.setBounds(42, 126, getWidth() - 84, 22);
     statusLabel.setBounds(42, getHeight() - 50, getWidth() - 84, 24);
 
     waveformEditor.setBounds(42, 174, getWidth() - 84,
-                             juce::jmax(120, getHeight() - 300));
+                             juce::jmax(120, getHeight() - 426));
+    parametersPanel.setBounds(42, waveformEditor.getBottom() + 8, getWidth() - 84, 116);
     const auto controlY = getHeight() - 100;
     playButton.setBounds(42, controlY, 86, 42);
     stopButton.setBounds(138, controlY, 86, 42);
@@ -259,4 +345,59 @@ void CreativeSamplerAudioProcessorEditor::resized()
     deleteSliceButton.setBounds(324, controlY, 82, 42);
     resetSlicesButton.setBounds(414, controlY, 74, 42);
     volumeSlider.setBounds(506, controlY + 4, getWidth() - 548, 34);
+}
+
+juce::var CreativeSamplerAudioProcessorEditor::webViewState() const
+{
+    auto state = juce::DynamicObject::Ptr(new juce::DynamicObject());
+    state->setProperty("sampleLoaded", audioProcessor.hasSample());
+    state->setProperty("status", audioProcessor.importStatus());
+    state->setProperty("playing", audioProcessor.isSamplePlaying());
+    auto slices = juce::Array<juce::var>();
+    for (const auto& slice : audioProcessor.sliceEngineForUi().slices())
+    {
+        auto item = juce::DynamicObject::Ptr(new juce::DynamicObject());
+        item->setProperty("id", static_cast<juce::int64>(slice.id));
+        item->setProperty("start", slice.startSample);
+        item->setProperty("end", slice.endSample);
+        item->setProperty("note", slice.midiNote);
+        item->setProperty("volume", slice.parameters.volume);
+        item->setProperty("pan", slice.parameters.pan);
+        slices.add(juce::var(item.get()));
+    }
+    state->setProperty("slices", slices);
+    auto peaks = juce::Array<juce::var>();
+    if (const auto data = audioProcessor.currentWaveform(); data != nullptr && data->levelCount() > 0
+        && audioProcessor.currentSampleMetadata())
+    {
+        const auto& metadata = *audioProcessor.currentSampleMetadata();
+        const auto levelIndex = data->chooseLevel(static_cast<double>(metadata.sampleCount) / 256.0);
+        const auto& level = data->level(levelIndex);
+        if (!level.channels.empty() && !level.channels.front().empty())
+        {
+            const auto& channel = level.channels.front();
+            constexpr size_t displayPeaks = 256;
+            for (size_t pixel = 0; pixel < displayPeaks; ++pixel)
+            {
+                const auto index = std::min(channel.size() - 1, pixel * channel.size() / displayPeaks);
+                peaks.add(std::max(std::abs(channel[index].minimum), std::abs(channel[index].maximum)));
+            }
+        }
+    }
+    state->setProperty("peaks", peaks);
+    if (const auto& metadata = audioProcessor.currentSampleMetadata(); metadata)
+    {
+        state->setProperty("file", metadata->fileName);
+        state->setProperty("duration", metadata->durationSeconds());
+        state->setProperty("sampleRate", metadata->sampleRate);
+        state->setProperty("channels", metadata->channelCount);
+    }
+    return juce::var(state.get());
+}
+
+void CreativeSamplerAudioProcessorEditor::loadWebUi()
+{
+    if (webView == nullptr)
+        return;
+    webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
 }

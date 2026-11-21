@@ -14,6 +14,7 @@ struct SlicePlaybackRegion
     std::int64_t startSample = 0;
     std::int64_t endSample = 0;
     int midiNote = 60;
+    SliceParameters parameters {};
 };
 
 // Built on a control thread and immutable once returned. It owns only a shared handle

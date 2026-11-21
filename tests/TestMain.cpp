@@ -1,11 +1,14 @@
 #include <juce_core/juce_core.h>
 #include "AnalysisInfrastructureTests.h"
+#include "ADSREnvelopeTests.h"
 #include "BPMAnalyzerTests.h"
 #include "KeyAnalyzerTests.h"
 #include "SampleEngineTests.h"
 #include "SliceEngineTests.h"
 #include "SlicePlaybackEngineTests.h"
 #include "TransientAnalyzerTests.h"
+
+#include "SliceParametersPanelTests.h"
 
 int main(int argc, char** argv)
 {
@@ -32,9 +35,11 @@ int main(int argc, char** argv)
         return 0;
     }
     tests.add(getAnalysisInfrastructureTest());
+    tests.add(getADSREnvelopeTest());
     tests.add(getBPMAnalyzerTest());
     tests.add(getKeyAnalyzerTest());
     tests.add(getTransientAnalyzerTest());
+    tests.add(getSliceParametersPanelTest());
     tests.add(getSliceEngineTest());
     tests.add(getSlicePlaybackEngineTest());
     tests.add(getSampleEngineTest());

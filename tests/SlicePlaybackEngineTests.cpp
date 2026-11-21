@@ -1,4 +1,5 @@
 #include "SlicePlaybackEngineTests.h"
+#include "../src/ui/SliceParameterBinding.h"
 #include "../src/playback/SlicePlaybackEngine.h"
 #include <juce_core/juce_core.h>
 #include <algorithm>
@@ -32,6 +33,34 @@ public:
 
     void runTest() override
     {
+        beginTest("Panel edits preserve other fields and only new notes adopt the published pan");
+        {
+            SliceEngine model;
+            expect(model.setSample(801, 8192));
+            const auto id = model.slices().front().id;
+            expect(editSliceField(model, 801, id, SliceField::attack, 0));
+            expect(editSliceField(model, 801, id, SliceField::pan, -1));
+            const auto sample = makeSample(8192);
+            SlicePlaybackEngine engine;
+            engine.prepare(48000);
+            engine.setCurrentSampleId(801);
+            expect(engine.publishSnapshot(SlicePlaybackSnapshot::create(sample, 801, model)));
+            juce::AudioBuffer<float> output(2, 64);
+            juce::MidiBuffer midi;
+            midi.addEvent(juce::MidiMessage::noteOn(1, 60, 1.0f), 0);
+            output.clear();
+            engine.process(output, midi, false);
+            expect(output.getSample(0, 63) > 0.24f);
+            expect(editSliceField(model, 801, id, SliceField::pan, 1));
+            expect(!editSliceField(model, 802, id, SliceField::volume, 0));
+            expectWithinAbsoluteError(model.find(id)->parameters.envelope.attackSeconds, 0.0f, 1.e-6f);
+            expect(engine.publishSnapshot(SlicePlaybackSnapshot::create(sample, 801, model)));
+            output.clear();
+            engine.process(output, midi, false);
+            expectWithinAbsoluteError(output.getSample(0, 63), 0.125f, 0.001f);
+            expectWithinAbsoluteError(output.getSample(1, 63), 0.125f, 0.001f);
+        }
+
         beginTest("Snapshot pins the immutable sample, maps notes, and rejects stale identity");
         {
             auto sample = makeSample(1024);
@@ -39,6 +68,12 @@ public:
             expect(editable.setSample(501, 1024));
             const auto firstId = editable.slices().front().id;
             expect(editable.setMidiNote(firstId, 64));
+            auto parameters = SliceParameters {};
+            parameters.volume = 1.75f;
+            parameters.pan = -0.4f;
+            parameters.pitchSemitones = 12.0f;
+            parameters.envelope = { 0.02f, 0.3f, 0.7f, 0.5f };
+            expect(editable.setParameters(firstId, parameters));
             auto snapshot = SlicePlaybackSnapshot::create(sample, 501, editable);
             expect(snapshot != nullptr);
             if (snapshot != nullptr)
@@ -46,12 +81,17 @@ public:
                 expect(snapshot->sampleHandle().get() == sample.get());
                 expect(snapshot->regionsForNote(64).size() == 1);
                 expect(snapshot->regionsForNote(60).empty());
+                expect(snapshot->regions().front().parameters == parameters);
                 const auto snapshotRevision = snapshot->revision();
                 expect(!SlicePlaybackSnapshot::create(sample, 500, editable));
                 expect(editable.setMidiNote(firstId, 65));
+                auto changedParameters = parameters;
+                changedParameters.pan = 0.8f;
+                expect(editable.setParameters(firstId, changedParameters));
                 expect(snapshot->revision() == snapshotRevision);
                 expect(snapshot->regionsForNote(64).size() == 1);
                 expect(snapshot->regionsForNote(65).empty());
+                expect(snapshot->regions().front().parameters == parameters);
             }
         }
 
@@ -60,6 +100,9 @@ public:
             auto monoSample = makeSample(512, 1, 0.3f);
             SliceEngine monoModel;
             expect(monoModel.setSample(511, 512));
+            auto monoParameters = SliceParameters {};
+            monoParameters.envelope = { 0.0f, 0.0f, 1.0f, 0.01f };
+            expect(monoModel.setParameters(monoModel.slices().front().id, monoParameters));
             auto monoSnapshot = SlicePlaybackSnapshot::create(monoSample, 511, monoModel);
             expect(monoSnapshot != nullptr);
             if (monoSnapshot != nullptr)
@@ -77,7 +120,7 @@ public:
                     maximumMonoOutput = std::max(maximumMonoOutput, std::abs(left));
                 }
                 expect(largestChannelDifference <= 1.0e-6f);
-                expect(maximumMonoOutput > 0.29f && maximumMonoOutput < 0.31f);
+                expect(maximumMonoOutput > 0.20f && maximumMonoOutput < 0.22f);
                 expect(!monoVoice.isActive());
             }
 
@@ -98,6 +141,9 @@ public:
             const auto id = model.slices().front().id;
             expect(model.moveBoundary(id, SliceBoundary::start, 128));
             expect(model.moveBoundary(id, SliceBoundary::end, 384));
+            auto parameters = SliceParameters {};
+            parameters.envelope = { 0.0f, 0.0f, 1.0f, 0.1f };
+            expect(model.setParameters(id, parameters));
             auto snapshot = SlicePlaybackSnapshot::create(sample, 502, model);
             expect(snapshot != nullptr);
             if (snapshot != nullptr)
@@ -126,6 +172,9 @@ public:
             auto sample = makeSample(24000, 2, 0.2f, 48000.0);
             expect(model.setSample(503, 24000));
             const auto first = model.slices().front().id;
+            auto parameters = SliceParameters {};
+            parameters.envelope.releaseSeconds = 0.005f;
+            expect(model.setParameters(first, parameters));
             const auto second = model.splitSlice(first, 12000);
             expect(second.has_value());
             if (second)
@@ -159,6 +208,122 @@ public:
             }
         }
 
+        beginTest("Per-slice Volume, Pan, Pitch, and Velocity alter the rendered voice");
+        {
+            auto sample = makeSample(4096, 2, 0.2f);
+            SliceEngine model;
+            expect(model.setSample(512, 4096));
+            auto parameters = SliceParameters {};
+            parameters.volume = 1.5f;
+            parameters.pan = 0.5f;
+            parameters.envelope = { 0.0f, 0.0f, 1.0f, 0.01f };
+            expect(model.setParameters(model.slices().front().id, parameters));
+            auto snapshot = SlicePlaybackSnapshot::create(sample, 512, model);
+            expect(snapshot != nullptr);
+            if (snapshot != nullptr)
+            {
+                SliceVoice voice;
+                expect(voice.start(snapshot.get(), 0, 60, 64, 48000.0, 0));
+                float left = 0.0f;
+                float right = 0.0f;
+                expect(voice.renderFrame(left, right));
+                const auto velocity = 64.0f / 127.0f;
+                expectWithinAbsoluteError(left, 0.2f * 1.5f * velocity * 0.70710678f, 1.0e-4f);
+                expectWithinAbsoluteError(right, 0.4f * 1.5f * velocity, 1.0e-4f);
+            }
+
+            auto monoSample = makeSample(2048, 1, 0.3f);
+            SliceEngine hardPanModel;
+            expect(hardPanModel.setSample(513, 2048));
+            auto hardPan = SliceParameters {};
+            hardPan.volume = 2.0f;
+            hardPan.pan = -1.0f;
+            hardPan.envelope = { 0.0f, 0.0f, 1.0f, 0.01f };
+            expect(hardPanModel.setParameters(hardPanModel.slices().front().id, hardPan));
+            auto hardPanSnapshot = SlicePlaybackSnapshot::create(monoSample, 513, hardPanModel);
+            expect(hardPanSnapshot != nullptr);
+            if (hardPanSnapshot != nullptr)
+            {
+                SliceVoice voice;
+                expect(voice.start(hardPanSnapshot.get(), 0, 60, 127, 48000.0, 0));
+                float left = 0.0f;
+                float right = 0.0f;
+                expect(voice.renderFrame(left, right));
+                expectWithinAbsoluteError(left, 0.6f, 1.0e-4f);
+                expectWithinAbsoluteError(right, 0.0f, 1.0e-6f);
+            }
+        }
+
+        beginTest("Note Off follows the slice ADSR, while Slice End forces a bounded safety fade");
+        {
+            auto sample = makeSample(48000, 1, 0.5f);
+            SliceEngine noteOffModel;
+            expect(noteOffModel.setSample(514, 48000));
+            auto parameters = SliceParameters {};
+            parameters.envelope = { 0.0f, 0.0f, 0.8f, 0.02f };
+            expect(noteOffModel.setParameters(noteOffModel.slices().front().id, parameters));
+            auto noteOffSnapshot = SlicePlaybackSnapshot::create(sample, 514, noteOffModel);
+            expect(noteOffSnapshot != nullptr);
+            if (noteOffSnapshot != nullptr)
+            {
+                SliceVoice voice;
+                expect(voice.start(noteOffSnapshot.get(), 0, 60, 127, 48000.0, 0));
+                float left = 0.0f;
+                float right = 0.0f;
+                for (int i = 0; i < 100; ++i)
+                    voice.renderFrame(left, right);
+                voice.noteOff();
+                for (int i = 0; i < 500; ++i)
+                    voice.renderFrame(left, right);
+                expect(voice.isActive());
+                for (int i = 0; i < 500; ++i)
+                    voice.renderFrame(left, right);
+                expect(!voice.isActive());
+            }
+
+            juce::AudioBuffer<float> boundaryAudio(1, 2048);
+            for (int i = 0; i < 2048; ++i)
+                boundaryAudio.setSample(0, i, i >= 128 && i < 1152 ? 0.5f : 50.0f);
+            SampleMetadata metadata;
+            metadata.sampleRate = 48000.0;
+            metadata.channelCount = 1;
+            metadata.sampleCount = 2048;
+            auto boundarySample = std::make_shared<const SampleStorage>(
+                std::move(boundaryAudio), metadata);
+            SliceEngine boundaryModel;
+            expect(boundaryModel.setSample(515, 2048));
+            const auto sliceId = boundaryModel.slices().front().id;
+            expect(boundaryModel.moveBoundary(sliceId, SliceBoundary::start, 128));
+            expect(boundaryModel.moveBoundary(sliceId, SliceBoundary::end, 1152));
+            auto boundaryParameters = SliceParameters {};
+            boundaryParameters.envelope = { 0.0f, 0.0f, 1.0f, 10.0f };
+            expect(boundaryModel.setParameters(sliceId, boundaryParameters));
+            auto boundarySnapshot = SlicePlaybackSnapshot::create(
+                boundarySample, 515, boundaryModel);
+            expect(boundarySnapshot != nullptr);
+            if (boundarySnapshot != nullptr)
+            {
+                SliceVoice voice;
+                expect(voice.start(boundarySnapshot.get(), 0, 60, 127, 48000.0, 0));
+                auto renderedFrames = 0;
+                auto maximum = 0.0f;
+                auto last = 0.0f;
+                float left = 0.0f;
+                float right = 0.0f;
+                while (voice.isActive() && renderedFrames < 1200)
+                {
+                    voice.renderFrame(left, right);
+                    maximum = std::max(maximum, std::abs(left));
+                    last = left;
+                    ++renderedFrames;
+                }
+                expect(renderedFrames == 1024);
+                expect(maximum > 0.34f && maximum < 0.36f);
+                expect(std::abs(last) < 1.0e-6f);
+                expect(!voice.isActive());
+            }
+        }
+
         beginTest("Pitch and source-rate conversion preserve the intended output durations");
         {
             constexpr int sourceFrames = 48000;
@@ -178,10 +343,11 @@ public:
             expect(snapshot != nullptr);
             if (snapshot != nullptr)
             {
-                const auto countPositiveCrossings = [&snapshot](int note)
+                const auto countPositiveCrossings = [](const SlicePlaybackSnapshot* source,
+                                                       int note)
                 {
                     SliceVoice voice;
-                    if (!voice.start(snapshot.get(), 0, note, 127, 48000.0, 0))
+                    if (!voice.start(source, 0, note, 127, 48000.0, 0))
                         return -1;
                     int crossings = 0;
                     float previous = 0.0f;
@@ -196,10 +362,26 @@ public:
                     }
                     return crossings;
                 };
-                const auto octaveUp = countPositiveCrossings(72);
-                const auto octaveDown = countPositiveCrossings(48);
+                const auto octaveUp = countPositiveCrossings(snapshot.get(), 72);
+                const auto octaveDown = countPositiveCrossings(snapshot.get(), 48);
                 expect(octaveUp >= 70 && octaveUp <= 76);
                 expect(octaveDown >= 17 && octaveDown <= 20);
+
+                SliceEngine slicePitchModel;
+                expect(slicePitchModel.setSample(508, sourceFrames));
+                auto pitchParameters = SliceParameters {};
+                pitchParameters.pitchSemitones = 12.0f;
+                pitchParameters.envelope = { 0.0f, 0.0f, 1.0f, 0.1f };
+                expect(slicePitchModel.setParameters(
+                    slicePitchModel.slices().front().id, pitchParameters));
+                auto pitchSnapshot = SlicePlaybackSnapshot::create(
+                    sample, 508, slicePitchModel);
+                expect(pitchSnapshot != nullptr);
+                if (pitchSnapshot != nullptr)
+                {
+                    const auto slicePitch = countPositiveCrossings(pitchSnapshot.get(), 60);
+                    expect(slicePitch >= 70 && slicePitch <= 76);
+                }
             }
 
             juce::AudioBuffer<float> convertedAudio(1, sourceFrames);
@@ -242,6 +424,9 @@ public:
             SliceEngine modelA;
             auto sampleA = makeSample(12000, 1, 0.3f);
             expect(modelA.setSample(504, 12000));
+            auto parameters = SliceParameters {};
+            parameters.envelope.releaseSeconds = 0.005f;
+            expect(modelA.setParameters(modelA.slices().front().id, parameters));
             auto snapshotA = SlicePlaybackSnapshot::create(sampleA, 504, modelA);
             SlicePlaybackEngine engine;
             engine.prepare(48000.0);

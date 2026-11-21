@@ -1,6 +1,7 @@
 #include "SliceEngineTests.h"
 #include "../src/slice/SliceEngine.h"
 #include <juce_core/juce_core.h>
+#include <limits>
 
 namespace
 {
@@ -131,6 +132,66 @@ public:
             expect(engine.slices()[0].id == *earlier);
             expect(engine.slices()[1].id == *later);
             expect(!engine.createSlice(250, 650).has_value());
+            expect(engine.isValid());
+        }
+
+        beginTest("Slice parameters validate ranges, remain independent, and inherit on split");
+        {
+            SliceEngine engine;
+            expect(engine.setSample(11, 2048));
+            const auto originalId = engine.slices().front().id;
+            const SliceParameters defaults {};
+            expect(engine.find(originalId)->parameters == defaults);
+
+            auto originalParameters = defaults;
+            originalParameters.volume = 1.5f;
+            originalParameters.pan = -0.25f;
+            originalParameters.pitchSemitones = 7.0f;
+            originalParameters.envelope = { 0.01f, 0.2f, 0.65f, 0.4f };
+            expect(engine.setParameters(originalId, originalParameters));
+            const auto rightId = engine.splitSlice(originalId, 1024);
+            expect(rightId.has_value());
+            if (rightId)
+            {
+                expect(engine.find(originalId)->parameters == originalParameters);
+                expect(engine.find(*rightId)->parameters == originalParameters);
+                auto rightParameters = originalParameters;
+                rightParameters.volume = 0.5f;
+                expect(engine.setParameters(*rightId, rightParameters));
+                expect(engine.find(originalId)->parameters == originalParameters);
+                expect(engine.find(*rightId)->parameters == rightParameters);
+
+                auto invalid = originalParameters;
+                invalid.volume = 2.01f;
+                expect(!engine.setParameters(originalId, invalid));
+                invalid = originalParameters;
+                invalid.pan = std::numeric_limits<float>::quiet_NaN();
+                expect(!engine.setParameters(originalId, invalid));
+                invalid = originalParameters;
+                invalid.pitchSemitones = std::numeric_limits<float>::infinity();
+                expect(!engine.setParameters(originalId, invalid));
+                invalid = originalParameters;
+                invalid.envelope.attackSeconds = 10.01f;
+                expect(!engine.setParameters(originalId, invalid));
+                invalid = originalParameters;
+                invalid.envelope.sustainLevel = std::numeric_limits<float>::quiet_NaN();
+                expect(!engine.setParameters(originalId, invalid));
+                expect(engine.find(originalId)->parameters == originalParameters);
+
+                expect(engine.deleteSlice(*rightId));
+                const auto gapSlice = engine.createSlice(1200, 1500);
+                expect(gapSlice.has_value());
+                if (gapSlice)
+                    expect(engine.find(*gapSlice)->parameters == defaults);
+                expect(engine.resetSlices());
+                expect(engine.slices().size() == 1);
+                expect(engine.slices().front().parameters == defaults);
+            }
+
+            expect(engine.setParameters(engine.slices().front().id, originalParameters));
+            expect(engine.setSample(12, 1024));
+            expect(engine.slices().size() == 1);
+            expect(engine.slices().front().parameters == defaults);
             expect(engine.isValid());
         }
     }
