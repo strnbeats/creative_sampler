@@ -35,6 +35,8 @@ target_sources(CreativeSampler PRIVATE
     src/analysis/AnalysisCoordinator.cpp
     src/analysis/AnalysisTypes.cpp
     src/analysis/BPMAnalyzer.cpp
+    src/analysis/KeyAnalyzer.cpp
+    src/analysis/TransientAnalyzer.cpp
     src/dsp/BandlimitedResampler.cpp
     src/sample/SampleStorage.cpp
     src/import/AudioImportService.cpp
@@ -55,6 +57,7 @@ target_link_libraries(CreativeSampler PRIVATE
     juce::juce_audio_utils
     juce::juce_audio_processors
     juce::juce_gui_basics
+    juce::juce_dsp
     PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
@@ -69,10 +72,14 @@ if (BUILD_TESTING)
         tests/TestMain.cpp
         tests/AnalysisInfrastructureTests.cpp
         tests/BPMAnalyzerTests.cpp
+        tests/KeyAnalyzerTests.cpp
+        tests/TransientAnalyzerTests.cpp
         tests/SampleEngineTests.cpp
         src/analysis/AnalysisCoordinator.cpp
         src/analysis/AnalysisTypes.cpp
         src/analysis/BPMAnalyzer.cpp
+        src/analysis/KeyAnalyzer.cpp
+        src/analysis/TransientAnalyzer.cpp
         src/dsp/BandlimitedResampler.cpp
         src/sample/SampleStorage.cpp
         src/import/AudioImportService.cpp
@@ -84,6 +91,7 @@ if (BUILD_TESTING)
     target_link_libraries(CreativeSamplerTests PRIVATE
         juce::juce_audio_formats
         juce::juce_audio_basics
+        juce::juce_dsp
         juce::juce_core
         juce::juce_events
         juce::juce_recommended_config_flags

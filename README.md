@@ -1,6 +1,6 @@
 # Creative Sampler
 
-Модульный VST3 sampler на C++ и JUCE. Реализованы Phase 0 (проектный каркас), Phase 1 (импорт и playback Sample), Phase 1.1 (band-limited resampling и validation), Phase 2A (инфраструктура анализа) и Phase 2B (BPM detection).
+Модульный Standalone/VST3 sampler на C++ и JUCE. Реализованы импорт, воспроизведение с band-limited resampling и фоновый анализ BPM, тональности и транзиентов.
 
 ## Сборка
 
@@ -14,7 +14,7 @@ ctest --test-dir build --output-on-failure
 
 Если JUCE установлен с CMake package config, вместо `JUCE_SOURCE_DIR` передайте путь к его package config через `JUCE_DIR`.
 
-Формат первой сборки — VST3. Цели AU и standalone в Phase 0 не включены.
+Поддерживаются macOS Standalone и VST3 targets. Цель AU не включена.
 
 ## Границы модулей
 
@@ -39,12 +39,14 @@ ctest --test-dir build --output-on-failure
 - File Chooser, drag & drop, метаданные и понятные состояния импорта.
 - `CreativeSamplerTests` проверяет импорт, отказоустойчивость, waveform, playback, frequency response, alias suppression, DC, границы, block-size consistency, замену Sample и retirement-queue backpressure.
 - `AnalysisCoordinator` управляет одним background worker и одной ожидающей задачей; новые запросы отменяют устаревшие, а результат публикуется только для актуальных Sample ID и generation.
-- `AnalysisResult` хранит статусы и типизированные поля BPM, key и transients с проверкой инвариантов. Реализован `BPMAnalyzer`; Key и Transient Detection пока не реализованы.
+- `AnalysisResult` хранит статусы и типизированные результаты BPM, Key и Transient Detection с проверкой инвариантов. Все три анализатора используют один worker `AnalysisCoordinator` с поддержкой отмены и общий неизменяемый `SampleStorage`.
+- Key analysis выполняет chroma-based оценку по JUCE FFT и Krumhansl–Schmuckler major/minor profiles; возвращает альтернативы, confidence и ambiguity.
 - BPM определяется по логарифмической RMS energy envelope, onset novelty и fractional-lag tempo autocorrelation. Результат содержит detection status, score, confidence, альтернативы и half/double-time ambiguity.
 - Для базовых CPU/memory измерений: `./build/CreativeSamplerTests_artefacts/Release/CreativeSamplerTests --benchmark`.
 - Для BPM analysis measurements: `./build/CreativeSamplerTests_artefacts/Release/CreativeSamplerTests --bpm-benchmark`.
+- Для Key analysis measurements: `./build/CreativeSamplerTests_artefacts/Release/CreativeSamplerTests --key-benchmark`.
 
-Полный декодированный Sample хранится в RAM; импорт ограничивает один Sample размером 2 GiB и сообщает об этом до выделения буфера. Форматы, отличные от WAV и AIFF, не заявлены. Key/Transient алгоритмы, slicing, polyphony, pitch/time-stretch и FX ещё не реализованы.
+Полный декодированный Sample хранится в RAM; импорт ограничивает один Sample размером 2 GiB и сообщает об этом до выделения буфера. Форматы, отличные от WAV и AIFF, не заявлены. Slicing, polyphony, pitch/time-stretch и FX ещё не реализованы.
 
 ## Передача Sample и время жизни
 
@@ -52,7 +54,7 @@ ctest --test-dir build --output-on-failure
 
 После успешного импорта `unique_ptr<SampleStorage>` один раз переводится в `shared_ptr<const SampleStorage>`. Processor передаёт тот же handle анализатору и Playback Engine. Playback Engine создаёт owner-envelope на message thread и передаёт только его сырой указатель через acquire/release pending-slot. Audio thread читает Sample через envelope, не копирует Sample handle и не меняет reference count.
 
-При замене audio thread делает 5 ms fade-out и помещает предыдущий owner-envelope в SPSC retirement queue. Если очередь заполнена, замена ждёт свободного места. Таймер Processor на message thread извлекает envelope и освобождает playback ownership вне audio thread. Если BPM analysis ещё держит Sample, его память остаётся доступна через отдельный shared handle до завершения или отмены анализа. `processBlock()` не блокируется и не освобождает Sample.
+При замене audio thread делает 5 ms fade-out и помещает предыдущий owner-envelope в SPSC retirement queue. Если очередь заполнена, замена ждёт свободного места. Таймер Processor на message thread извлекает envelope и освобождает playback ownership вне audio thread. Если BPM или Key analysis ещё держит Sample, его память остаётся доступна через отдельный shared handle до завершения или отмены анализа. `processBlock()` не блокируется и не освобождает Sample.
 
 ## Phase 1.1 — audio quality validation
 
@@ -70,7 +72,7 @@ Release measurements на локальном стенде для 96→44.1 kHz: 
 
 `AnalysisResult` различает NotAnalyzed, Running, Completed, Failed и Cancelled. Терминальные результаты привязаны к Sample ID и generation; устаревшие завершения игнорируются. Координатор ожидает окончания активного analyzer при shutdown, поэтому реализации analyzer обязаны поддерживать кооперативную отмену.
 
-Phase 2A оставил UI вне анализа и не менял playback ownership. В Phase 2B введён общий immutable Sample handle; processor автоматически запускает BPM analysis после успешной загрузки. UI показывает только фактически полученное состояние и результат.
+Phase 2A оставил UI вне анализа и не менял playback ownership. В Phase 2B введён общий immutable Sample handle и автоматический BPM analysis после успешной загрузки; Phase 2C добавила автоматический Key analysis. Phase 2D добавила Transient analysis. UI показывает только фактически полученные состояния и результаты.
 
 ## Phase 2B — BPM detection
 
@@ -82,4 +84,28 @@ BPM `score` — нормализованная поддержка autocorrelatio
 
 Локальный Release benchmark на 48 kHz: 2 s — 0.11 ms, 10 s — 0.73 ms, 60 s — 4.62 ms, 180 s — 14.09 ms. Основной дополнительный feature buffer занимает около 400 bytes на секунду аудио; Sample buffer не копируется. Время — один локальный прогон на синтетическом kick fixture, не realtime audio CPU load.
 
+## Phase 2C — key detection
+
+`KeyAnalyzer` обрабатывает перекрывающиеся Hann frames длительностью около 0.34 s через `juce::dsp::FFT`. Локальные спектральные пики отображаются в 12 pitch classes с распределением между соседними полутонами и сниженным весом верхних гармоник. Chroma агрегируется по четырём участкам Sample и сравнивается с вращёнными Krumhansl–Schmuckler major/minor profiles по Pearson correlation.
+
+Confidence — эвристика: учитывает профильный score, разницу с runner-up, стабильность tonal profile между участками, число кадров, выразительность chroma и неоднозначность. Результат не является статистической вероятностью. Если chroma близка к равномерной, кадров мало, либо присутствуют лишь короткие перкуссионные события, возвращается `insufficientData` без tonic/mode. Короткий аккорд может вернуть низкую уверенность и alternative relative key.
+
+Синтетическая матрица восьми chord progressions: exact key 8/8, tonic 8/8, mode 8/8, правильная тональность в Top-3 8/8. На десяти отрицательных фикстурах (silence, white/pink noise, transient, kick, snare, noise sweep, atonal sequence, short FX, single note) ложных определений 0/10. Это проверка детерминированных fixtures, а не измерение точности на реальной музыкальной коллекции. На одном локальном Release-прогоне для 180 s: 44.1 kHz — 222 ms, 48 kHz — 210 ms, 96 kHz — 403 ms. Явные FFT/window/chroma buffers — около 197 KB при 44.1/48 kHz и 394 KB при 96 kHz; это не RSS и не включает внутренние таблицы FFT. Benchmark запускается через `--key-benchmark`.
+
 Тесты и сборка не заменяют DAW smoke test: доступен только GarageBand, который не принимает VST3; REAPER и `pluginval` отсутствуют.
+
+### Phase 2D — Transient Detection
+
+`TransientAnalyzer` работает через общий `AnalysisCoordinator` и анализирует неизменяемый Sample вне аудиопотока. На коротком centered Hann STFT (около 12 ms, hop 1 ms) оценивается положительный spectral flux, рост RMS и high-frequency emphasis. Порог адаптируется по локальному окну; пики объединяются с минимальным расстоянием, а frame lead компенсируется при переводе позиции в samples.
+
+Событие хранит sample position как источник истины, а также время, normalized position, Strength, Confidence и spectral flux. Strength характеризует относительную выраженность атаки; Confidence — эвристическая оценка по prominence и согласованности features, не вероятность. Пустой/слишком короткий, постоянный DC и неподходящий материал возвращают `insufficientData`. При заполнении лимита списка результат помечается `truncated` и сохраняет полный `totalEventCount`.
+
+UI показывает число транзиентов и рисует максимум 2 000 маркеров на waveform. Редактор обновляет кеш при смене идентификатора или статуса анализа.
+
+### Phase 2D.1 — калибровка транзиентов
+
+Для каждого кандидата детектор сравнивает уровни восьми спектральных полос после предполагаемого начала с локальным фоном перед ним. Для короткого щелчка дополнительное подтверждение и координату даёт вторая разность отсчётов. Confidence учитывает локальное подтверждение атаки и превышение фона по novelty. Strength по-прежнему измеряет относительную выраженность novelty.
+
+На синтетических проверках осталось 16/16 исходных положительных событий. На шумовом фоне найдено 8/9 атак против 6/9, а на двух 30-секундных розовых шумах число ложных маркеров снизилось с 51 и 50 до нуля. Одна тихая двухтональная атака маскируется шумом. Маркеры вблизи краёв файла могут отбрасываться из-за неполного контекста. Точность на реальных записях пока не измерялась.
+
+Рабочие массивы признаков используют 64 байта на кадр. Дополнительно учитывается ёмкость списка кандидатов. Оценка для 180 секунд составляет около 12,1 МБ без аудиобуфера, памяти FFT и опубликованных событий. Прогоны доступны через `CreativeSamplerTests --transient-benchmark` и `CreativeSamplerTests --transient-test`.

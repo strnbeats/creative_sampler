@@ -132,6 +132,12 @@ AnalysisResult AnalysisCoordinator::latestResult() const
     return result;
 }
 
+AnalysisResultStamp AnalysisCoordinator::latestStamp() const
+{
+    const std::lock_guard<std::mutex> lock(stateMutex);
+    return { result.identity, result.status };
+}
+
 bool AnalysisCoordinator::isSampleUsable(const SampleStorage& sample) noexcept
 {
     const auto& audio = sample.audio();

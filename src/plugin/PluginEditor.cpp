@@ -12,44 +12,73 @@ const auto accent = juce::Colour(0xff72f2cf);
 juce::String makeAnalysisStatusText(const AnalysisResult& result)
 {
     if (result.status == AnalysisStatus::running)
-        return "BPM analysis…";
+        return "Analyzing sample…";
     if (result.status == AnalysisStatus::failed)
-        return "BPM analysis error: " + result.error;
+        return "Analysis error: " + result.error;
     if (result.status == AnalysisStatus::cancelled)
-        return "BPM analysis cancelled";
-    if (result.status == AnalysisStatus::notAnalyzed || !result.bpm)
-        return "BPM not analyzed";
+        return "Analysis cancelled";
+    if (result.status == AnalysisStatus::notAnalyzed)
+        return "Sample not analyzed";
 
-    const auto& bpm = *result.bpm;
-    switch (bpm.detectionStatus)
+    juce::StringArray descriptions;
+    if (result.bpm)
     {
-        case BpmDetectionStatus::insufficientData:
-            return "BPM unavailable: sample is too short";
-        case BpmDetectionStatus::noRhythmicContent:
-            return "BPM unavailable: no stable rhythm";
-        case BpmDetectionStatus::lowConfidence:
-        case BpmDetectionStatus::detected:
-            break;
-    }
-
-    if (!bpm.effectiveValue())
-        return "BPM unavailable";
-    auto text = "BPM " + juce::String(*bpm.effectiveValue(), 1)
-        + "  ·  confidence " + juce::String(juce::roundToInt(bpm.confidence * 100.0f)) + "%";
-    if (bpm.octaveAmbiguous)
-    {
-        const auto octaveAlternative = std::find_if(bpm.alternatives.begin(), bpm.alternatives.end(),
-            [&bpm](const auto& candidate)
+        const auto& bpm = *result.bpm;
+        if (bpm.effectiveValue())
+        {
+            auto text = "BPM " + juce::String(*bpm.effectiveValue(), 1)
+                + "  ·  confidence " + juce::String(juce::roundToInt(bpm.confidence * 100.0f)) + "%";
+            if (bpm.octaveAmbiguous)
             {
-                const auto ratio = candidate.value / *bpm.value;
-                return (ratio >= 1.90 && ratio <= 2.10) || (ratio >= 0.476 && ratio <= 0.526);
-            });
-        if (octaveAlternative != bpm.alternatives.end())
-            text += "  ·  also " + juce::String(octaveAlternative->value, 1);
+                const auto octaveAlternative = std::find_if(bpm.alternatives.begin(), bpm.alternatives.end(),
+                    [&bpm](const auto& candidate)
+                    {
+                        const auto ratio = candidate.value / *bpm.value;
+                        return (ratio >= 1.90 && ratio <= 2.10) || (ratio >= 0.476 && ratio <= 0.526);
+                    });
+                if (octaveAlternative != bpm.alternatives.end())
+                    text += "  ·  also " + juce::String(octaveAlternative->value, 1);
+            }
+            if (bpm.detectionStatus == BpmDetectionStatus::lowConfidence)
+                text += "  ·  low confidence";
+            descriptions.add(text);
+        }
+        else
+        {
+            descriptions.add(bpm.detectionStatus == BpmDetectionStatus::insufficientData
+                ? "BPM unavailable: sample is too short"
+                : "BPM unavailable: no stable rhythm");
+        }
     }
-    if (bpm.detectionStatus == BpmDetectionStatus::lowConfidence)
-        text += "  ·  low confidence";
-    return text;
+    if (result.key)
+    {
+        const auto& key = *result.key;
+        if (!key.tonic || !key.mode)
+            descriptions.add("Key unavailable: insufficient tonal material");
+        else
+        {
+            auto text = key.fullName() + "  ·  confidence "
+                + juce::String(juce::roundToInt(key.confidence * 100.0f)) + "%";
+            if (key.ambiguous)
+                text += "  ·  ambiguous";
+            else if (key.detectionStatus == KeyDetectionStatus::lowConfidence)
+                text += "  ·  low confidence";
+            descriptions.add(text);
+        }
+    }
+    if (result.transients)
+    {
+        const auto& transients = *result.transients;
+        if (transients.detectionStatus == TransientDetectionStatus::insufficientData)
+            descriptions.add("Transients: none detected");
+        else if (transients.detectionStatus == TransientDetectionStatus::truncated)
+            descriptions.add("Transients: " + juce::String(static_cast<juce::int64>(transients.totalEventCount))
+                             + " (display limited)");
+        else
+            descriptions.add("Transients: "
+                             + juce::String(static_cast<juce::int64>(transients.totalEventCount)));
+    }
+    return descriptions.joinIntoString("  ·  ");
 }
 }
 
@@ -141,9 +170,10 @@ void CreativeSamplerAudioProcessorEditor::openFileChooser()
 
 void CreativeSamplerAudioProcessorEditor::timerCallback()
 {
+    refreshAnalysisCache();
     auto status = audioProcessor.importStatus();
     if (audioProcessor.hasSample())
-        status += "  ·  " + makeAnalysisStatusText(audioProcessor.currentAnalysisResult());
+        status += "  ·  " + makeAnalysisStatusText(cachedAnalysis);
     statusLabel.setText(status, juce::dontSendNotification);
     const auto ready = audioProcessor.hasSample();
     playButton.setEnabled(ready);
@@ -163,6 +193,17 @@ void CreativeSamplerAudioProcessorEditor::timerCallback()
         metadataLabel.setText("WAV and AIFF  /  mono or stereo", juce::dontSendNotification);
     }
     repaint();
+}
+
+void CreativeSamplerAudioProcessorEditor::refreshAnalysisCache()
+{
+    const auto stamp = audioProcessor.currentAnalysisStamp();
+    if (!hasCachedAnalysisStamp || !(stamp == cachedAnalysisStamp))
+    {
+        cachedAnalysis = audioProcessor.currentAnalysisResult();
+        cachedAnalysisStamp = stamp;
+        hasCachedAnalysisStamp = true;
+    }
 }
 
 void CreativeSamplerAudioProcessorEditor::drawWaveform(juce::Graphics& graphics,
@@ -236,7 +277,22 @@ void CreativeSamplerAudioProcessorEditor::paint(juce::Graphics& graphics)
     const auto waveform = audioProcessor.currentWaveform();
     const auto& sample = audioProcessor.currentSampleMetadata();
     if (waveform != nullptr && sample.has_value())
+    {
         drawWaveform(graphics, waveformBounds.reduced(12.0f), *waveform, *sample);
+        if (cachedAnalysis.transients && sample->sampleCount > 0)
+        {
+            const auto& events = cachedAnalysis.transients->positions;
+            const auto stride = juce::jmax<size_t>(1, (events.size() + 1999) / 2000);
+            const auto markerBounds = waveformBounds.reduced(12.0f);
+            graphics.setColour(juce::Colour(0xffffb45f).withAlpha(0.88f));
+            for (size_t i = 0; i < events.size(); i += stride)
+            {
+                const auto proportion = juce::jlimit(0.0, 1.0, events[i].normalizedPosition);
+                const auto x = markerBounds.getX() + static_cast<float>(proportion) * markerBounds.getWidth();
+                graphics.drawVerticalLine(juce::roundToInt(x), markerBounds.getY(), markerBounds.getBottom());
+            }
+        }
+    }
     else
     {
         graphics.setColour(muted);

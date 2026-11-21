@@ -17,6 +17,7 @@ public:
 
 private:
     void timerCallback() override;
+    void refreshAnalysisCache();
     void drawWaveform(juce::Graphics& graphics, juce::Rectangle<float> bounds,
                       const WaveformData& data, const SampleMetadata& metadata);
     void openFileChooser();
@@ -31,5 +32,8 @@ private:
     juce::Label metadataLabel;
     juce::Label statusLabel;
     std::unique_ptr<juce::FileChooser> fileChooser;
+    AnalysisResult cachedAnalysis;
+    AnalysisResultStamp cachedAnalysisStamp;
+    bool hasCachedAnalysisStamp = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CreativeSamplerAudioProcessorEditor)
 };

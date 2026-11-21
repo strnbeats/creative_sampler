@@ -33,6 +33,7 @@ public:
 
     // Intended for UI/message-thread consumers and tests, never for the audio thread.
     AnalysisResult latestResult() const;
+    AnalysisResultStamp latestStamp() const;
 
 private:
     struct WorkItem

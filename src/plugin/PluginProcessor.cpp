@@ -6,6 +6,8 @@ CreativeSamplerAudioProcessor::CreativeSamplerAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, "PARAMETERS", createParameterLayout()),
       bpmAnalyzer(std::make_shared<BPMAnalyzer>()),
+      keyAnalyzer(std::make_shared<KeyAnalyzer>()),
+      transientAnalyzer(std::make_shared<TransientAnalyzer>()),
       importService([this](AudioImportResult result) { handleImportResult(std::move(result)); })
 {
     volumeParameter = parameters.getRawParameterValue("volume");
@@ -121,7 +123,10 @@ void CreativeSamplerAudioProcessor::handleImportResult(AudioImportResult result)
     try
     {
         std::vector<std::shared_ptr<const Analyzer>> analyzers;
+        analyzers.reserve(3);
         analyzers.push_back(bpmAnalyzer);
+        analyzers.push_back(keyAnalyzer);
+        analyzers.push_back(transientAnalyzer);
         (void) analysisCoordinator.requestAnalysis(sampleId, std::move(sample), std::move(analyzers));
     }
     catch (const std::bad_alloc&)

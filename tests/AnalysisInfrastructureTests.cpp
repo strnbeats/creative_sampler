@@ -210,8 +210,15 @@ public:
                 AnalyzerOutput::success(BpmAnalysis { 120.0, 0.9f, {} }));
             auto keyAnalyzer = std::make_shared<FixedAnalyzer>(AnalyzerKind::key,
                 AnalyzerOutput::success(KeyAnalysis { PitchClass::a, ScaleMode::minor, 0.7f, {} }));
+            Transient transient { 0.02, 0.8f, 0.9f, 960, 960.0 / 4799.0, 0.6f };
+            TransientAnalysis transientPayload;
+            transientPayload.positions.push_back(transient);
+            transientPayload.sampleRate = 48000.0;
+            transientPayload.sampleCount = 4800;
+            transientPayload.totalEventCount = 1;
+            transientPayload.detectionStatus = TransientDetectionStatus::detected;
             auto transientAnalyzer = std::make_shared<FixedAnalyzer>(AnalyzerKind::transients,
-                AnalyzerOutput::success(TransientAnalysis { { { 0.02, 0.8f, 0.9f } } }));
+                AnalyzerOutput::success(std::move(transientPayload)));
             const auto request = coordinator.requestAnalysis(sampleId, makeAnalysisSample(),
                 { bpmAnalyzer, keyAnalyzer, transientAnalyzer });
             expect(request.has_value());

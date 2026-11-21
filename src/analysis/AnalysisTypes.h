@@ -28,6 +28,14 @@ enum class AnalysisStatus
     cancelled
 };
 
+struct AnalysisResultStamp
+{
+    AnalysisIdentity identity;
+    AnalysisStatus status = AnalysisStatus::notAnalyzed;
+
+    bool operator==(const AnalysisResultStamp&) const noexcept = default;
+};
+
 enum class AnalyzerKind
 {
     bpm,
@@ -93,19 +101,43 @@ enum class ScaleMode
     minor
 };
 
+enum class KeyDetectionStatus
+{
+    detected,
+    lowConfidence,
+    insufficientData
+};
+
 struct KeyCandidate
 {
     PitchClass tonic = PitchClass::c;
     ScaleMode mode = ScaleMode::major;
     float confidence = 0.0f;
+    float score = 0.0f;
 };
 
 struct KeyAnalysis
 {
-    PitchClass tonic = PitchClass::c;
-    ScaleMode mode = ScaleMode::major;
+    KeyAnalysis() = default;
+    KeyAnalysis(PitchClass detectedTonic, ScaleMode detectedMode, float detectedConfidence,
+                std::vector<KeyCandidate> candidateAlternatives = {})
+        : tonic(detectedTonic), mode(detectedMode), confidence(detectedConfidence),
+          alternatives(std::move(candidateAlternatives)),
+          detectionStatus(detectedConfidence < 0.35f ? KeyDetectionStatus::lowConfidence
+                                                     : KeyDetectionStatus::detected)
+    {
+    }
+
+    std::optional<PitchClass> tonic;
+    std::optional<ScaleMode> mode;
     float confidence = 0.0f;
     std::vector<KeyCandidate> alternatives;
+    float score = 0.0f;
+    KeyDetectionStatus detectionStatus = KeyDetectionStatus::insufficientData;
+    bool ambiguous = false;
+
+    juce::String fullName() const;
+    bool isValid() const noexcept;
 };
 
 struct Transient
@@ -113,11 +145,25 @@ struct Transient
     double timeSeconds = 0.0;
     float strength = 0.0f;
     std::optional<float> confidence;
+    juce::int64 samplePosition = -1;
+    double normalizedPosition = -1.0;
+    float spectralFlux = 0.0f;
 };
+
+enum class TransientDetectionStatus { detected, insufficientData, truncated };
 
 struct TransientAnalysis
 {
     std::vector<Transient> positions;
+    double sampleRate = 0.0;
+    juce::int64 sampleCount = 0;
+    size_t totalEventCount = 0;
+    TransientDetectionStatus detectionStatus = TransientDetectionStatus::insufficientData;
+
+    double durationSeconds() const noexcept
+    {
+        return sampleRate > 0.0 ? static_cast<double>(sampleCount) / sampleRate : 0.0;
+    }
 };
 
 using AnalysisPayload = std::variant<BpmAnalysis, KeyAnalysis, TransientAnalysis>;
