@@ -1,0 +1,44 @@
+name: Windows Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build VST3, Standalone, and tests (x64)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Creative Sampler
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout JUCE 9.0.5
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: 9.0.5
+          path: JUCE
+          submodules: recursive
+
+      - name: Configure x64 Release build
+        run: cmake -S . -B build -A x64 "-DJUCE_SOURCE_DIR=${{ github.workspace }}/JUCE" -DBUILD_TESTING=ON
+
+      - name: Build VST3, Standalone, and tests
+        run: cmake --build build --config Release --target CreativeSampler_VST3 CreativeSampler_Standalone CreativeSamplerTests --parallel 4
+
+      - name: Run tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Upload Windows VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: CreativeSampler-Windows-x64-VST3
+          path: 'build/CreativeSampler_artefacts/Release/VST3/Creative Sampler.vst3'
+          if-no-files-found: error
+          retention-days: 14
