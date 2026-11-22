@@ -22,6 +22,10 @@ private:
     bool refreshAnalysisCache();
     void openFileChooser();
     juce::var webViewState() const;
+    juce::var webViewV2Snapshot(const juce::String& requestId);
+    juce::var webViewV2Waveform(const juce::var& request) const;
+    juce::var webViewV2Transport(const juce::var& request) const;
+    void publishUiV2Events();
     void loadWebUi();
 
     CreativeSamplerAudioProcessor& audioProcessor;
@@ -43,5 +47,11 @@ private:
     AnalysisResult cachedAnalysis;
     AnalysisResultStamp cachedAnalysisStamp;
     bool hasCachedAnalysisStamp = false;
+    std::uint64_t webUiV2Sequence = 1;
+    juce::String lastUiV2Fingerprint;
+    juce::String lastUiV2TransportSample;
+    bool uiV2Ready = false;
+    bool hasUiV2TransportState = false;
+    bool lastUiV2TransportPlaying = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CreativeSamplerAudioProcessorEditor)
 };

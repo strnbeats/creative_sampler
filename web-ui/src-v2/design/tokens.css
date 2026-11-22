@@ -1,0 +1,50 @@
+:root {
+  color-scheme: dark;
+
+  --cs-color-void: #0d0e12;
+  --cs-color-background: #111118;
+  --cs-color-surface: #15151d;
+  --cs-color-surface-raised: #191821;
+  --cs-color-surface-hover: #20202a;
+  --cs-color-border: #302d3a;
+  --cs-color-border-quiet: #24232c;
+  --cs-color-text: #efedf5;
+  --cs-color-text-secondary: #b6b2c0;
+  --cs-color-text-muted: #85818f;
+  --cs-color-violet: #b59cf4;
+  --cs-color-violet-soft: #8170b6;
+  --cs-color-mint: #72d9ca;
+  --cs-color-amber: #d7aa7b;
+  --cs-color-wave-high: #b8a7ec;
+  --cs-color-wave-low: #9bded4;
+  --cs-color-playhead: #e9e0ff;
+  --cs-color-danger: #df8b92;
+  --cs-color-disabled: #55515d;
+
+  --cs-font-ui: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --cs-font-data: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --cs-space-1: 4px;
+  --cs-space-2: 8px;
+  --cs-space-3: 12px;
+  --cs-space-4: 18px;
+  --cs-space-5: 28px;
+  --cs-space-6: 40px;
+
+  --cs-radius-control: 5px;
+  --cs-radius-surface: 10px;
+  --cs-border-subtle: 1px solid var(--cs-color-border-quiet);
+  --cs-shadow-raised: 0 12px 36px rgb(0 0 0 / 22%);
+  --cs-gradient-stage: linear-gradient(180deg, rgb(181 156 244 / 3%), transparent 58%);
+  --cs-glow-selected: 0 0 22px rgb(181 156 244 / 12%);
+
+  --cs-motion-fast: 120ms;
+  --cs-motion-standard: 160ms;
+  --cs-motion-gentle: 220ms;
+  --cs-ease-standard: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  --cs-layer-content: 0;
+  --cs-layer-overlay: 2;
+  --cs-layer-playhead: 3;
+  --cs-layer-tooltip: 5;
+}

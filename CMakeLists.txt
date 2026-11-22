@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 
 project(CreativeSampler VERSION 0.1.0 LANGUAGES C CXX)
 
+option(CREATIVE_SAMPLER_USE_UI_V2 "Load the read-only React UI-v2 in the plugin editor" ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -12,6 +14,12 @@ execute_process(COMMAND ${NPM_EXECUTABLE} run build
     RESULT_VARIABLE WEB_UI_BUILD_RESULT)
 if (NOT WEB_UI_BUILD_RESULT EQUAL 0)
     message(FATAL_ERROR "Creative Sampler Web UI production build failed")
+endif()
+execute_process(COMMAND ${NPM_EXECUTABLE} run build:v2
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/web-ui"
+    RESULT_VARIABLE WEB_UI_V2_BUILD_RESULT)
+if (NOT WEB_UI_V2_BUILD_RESULT EQUAL 0)
+    message(FATAL_ERROR "Creative Sampler UI-v2 production build failed")
 endif()
 
 # JUCE can be supplied either as an installed CMake package or as a source tree.
@@ -39,6 +47,10 @@ juce_add_plugin(CreativeSampler
 )
 
 juce_add_binary_data(CreativeSamplerWebUI SOURCES web-ui/dist/index.html)
+juce_add_binary_data(CreativeSamplerWebUIV2
+    NAMESPACE BinaryDataV2
+    HEADER_NAME BinaryDataV2.h
+    SOURCES web-ui/dist-v2/index.html)
 
 juce_generate_juce_header(CreativeSampler)
 
@@ -70,9 +82,15 @@ target_compile_definitions(CreativeSampler PUBLIC
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
 )
+if (CREATIVE_SAMPLER_USE_UI_V2)
+    target_compile_definitions(CreativeSampler PRIVATE CREATIVE_SAMPLER_USE_UI_V2=1)
+else()
+    target_compile_definitions(CreativeSampler PRIVATE CREATIVE_SAMPLER_USE_UI_V2=0)
+endif()
 
 target_link_libraries(CreativeSampler PRIVATE
     CreativeSamplerWebUI
+    CreativeSamplerWebUIV2
     juce::juce_audio_utils
     juce::juce_audio_processors
     juce::juce_gui_basics

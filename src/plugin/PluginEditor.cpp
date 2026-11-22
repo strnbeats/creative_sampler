@@ -1,7 +1,10 @@
 #include "PluginEditor.h"
 #include <algorithm>
 #include <BinaryData.h>
+#include <BinaryDataV2.h>
+#include <cmath>
 #include <cstring>
+#include <string>
 
 namespace
 {
@@ -10,6 +13,127 @@ const auto surface = juce::Colour(0xff1b1d25);
 const auto foreground = juce::Colour(0xfff2f0f7);
 const auto muted = juce::Colour(0xffa3a4b2);
 const auto accent = juce::Colour(0xff72f2cf);
+
+juce::DynamicObject::Ptr makeObject()
+{
+    return juce::DynamicObject::Ptr(new juce::DynamicObject());
+}
+
+juce::var makeV2Ack(const juce::String& requestId, juce::var result)
+{
+    auto ack = makeObject();
+    ack->setProperty("protocolVersion", 2);
+    ack->setProperty("type", "ack");
+    ack->setProperty("requestId", requestId);
+    ack->setProperty("ok", true);
+    ack->setProperty("result", std::move(result));
+    return juce::var(ack.get());
+}
+
+juce::var makeV2Error(const juce::String& requestId, const juce::String& code,
+                      const juce::String& message, bool retryable = false)
+{
+    auto error = makeObject();
+    error->setProperty("code", code);
+    error->setProperty("message", message);
+    error->setProperty("retryable", retryable);
+    auto ack = makeObject();
+    ack->setProperty("protocolVersion", 2);
+    ack->setProperty("type", "ack");
+    ack->setProperty("requestId", requestId);
+    ack->setProperty("ok", false);
+    ack->setProperty("error", juce::var(error.get()));
+    return juce::var(ack.get());
+}
+
+juce::String uint64String(std::uint64_t value)
+{
+    return juce::String(std::to_string(value));
+}
+
+bool getV2Request(const juce::var& value, juce::String& requestId, juce::String& errorCode,
+                  juce::String& errorMessage)
+{
+    const auto* object = value.getDynamicObject();
+    if (object == nullptr)
+    {
+        errorCode = "INVALID_ARGUMENT";
+        errorMessage = "Expected a protocol v2 request object.";
+        return false;
+    }
+    requestId = object->getProperty("requestId").toString();
+    const auto protocol = object->getProperty("protocolVersion");
+    if ((!protocol.isInt() && !protocol.isInt64() && !protocol.isDouble())
+        || protocol.toString().getDoubleValue() != 2.0)
+    {
+        errorCode = "UNSUPPORTED_PROTOCOL";
+        errorMessage = "This UI supports bridge protocol version 2.";
+        return false;
+    }
+    if (requestId.isEmpty() || requestId.length() > 128)
+    {
+        errorCode = "INVALID_ARGUMENT";
+        errorMessage = "A non-empty requestId is required.";
+        return false;
+    }
+    return true;
+}
+
+juce::String analysisStatusName(AnalysisStatus status)
+{
+    switch (status)
+    {
+        case AnalysisStatus::notAnalyzed: return "notAnalyzed";
+        case AnalysisStatus::running: return "running";
+        case AnalysisStatus::completed: return "completed";
+        case AnalysisStatus::failed: return "failed";
+        case AnalysisStatus::cancelled: return "cancelled";
+    }
+    return "notAnalyzed";
+}
+
+juce::String pitchClassName(PitchClass pitchClass)
+{
+    switch (pitchClass)
+    {
+        case PitchClass::c: return "C";
+        case PitchClass::cSharp: return "C#";
+        case PitchClass::d: return "D";
+        case PitchClass::dSharp: return "D#";
+        case PitchClass::e: return "E";
+        case PitchClass::f: return "F";
+        case PitchClass::fSharp: return "F#";
+        case PitchClass::g: return "G";
+        case PitchClass::gSharp: return "G#";
+        case PitchClass::a: return "A";
+        case PitchClass::aSharp: return "A#";
+        case PitchClass::b: return "B";
+    }
+    return {};
+}
+
+juce::String bpmStatusName(BpmDetectionStatus status)
+{
+    switch (status)
+    {
+        case BpmDetectionStatus::detected: return "detected";
+        case BpmDetectionStatus::lowConfidence: return "lowConfidence";
+        case BpmDetectionStatus::insufficientData: return "insufficientData";
+        case BpmDetectionStatus::noRhythmicContent: return "noRhythmicContent";
+    }
+    return "insufficientData";
+}
+
+juce::String keyStatusName(KeyDetectionStatus status)
+{
+    switch (status)
+    {
+        case KeyDetectionStatus::detected: return "detected";
+        case KeyDetectionStatus::lowConfidence: return "lowConfidence";
+        case KeyDetectionStatus::insufficientData: return "insufficientData";
+    }
+    return "insufficientData";
+}
 
 juce::String makeAnalysisStatusText(const AnalysisResult& result)
 {
@@ -199,11 +323,60 @@ CreativeSamplerAudioProcessorEditor::CreativeSamplerAudioProcessorEditor(
             (void) waveformEditor.deleteSelectedSlice();
             done(webViewState());
         })
+        .withNativeFunction("getUiV2Snapshot", [this](const juce::Array<juce::var>& args,
+                                                          juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            juce::String requestId, errorCode, errorMessage;
+            if (args.isEmpty() || !getV2Request(args[0], requestId, errorCode, errorMessage))
+                done(makeV2Error(requestId, errorCode.isEmpty() ? "INVALID_ARGUMENT" : errorCode,
+                                 errorMessage.isEmpty() ? "Missing protocol request." : errorMessage));
+            else
+            {
+                uiV2Ready = true;
+                done(webViewV2Snapshot(requestId));
+            }
+        })
+        .withNativeFunction("getUiV2Waveform", [this](const juce::Array<juce::var>& args,
+                                                         juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            if (args.isEmpty())
+            {
+                done(makeV2Error({}, "INVALID_ARGUMENT", "Missing waveform request."));
+                return;
+            }
+            done(webViewV2Waveform(args[0]));
+        })
+        .withNativeFunction("getUiV2Transport", [this](const juce::Array<juce::var>& args,
+                                                           juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            if (args.isEmpty())
+            {
+                done(makeV2Error({}, "INVALID_ARGUMENT", "Missing transport request."));
+                return;
+            }
+            done(webViewV2Transport(args[0]));
+        })
+        .withNativeFunction("importSampleV2", [this](const juce::Array<juce::var>& args,
+                                                        juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            juce::String requestId, errorCode, errorMessage;
+            if (args.isEmpty() || !getV2Request(args[0], requestId, errorCode, errorMessage))
+            {
+                done(makeV2Error(requestId, errorCode.isEmpty() ? "INVALID_ARGUMENT" : errorCode,
+                                 errorMessage.isEmpty() ? "Missing import request." : errorMessage));
+                return;
+            }
+            openFileChooser();
+            auto result = makeObject();
+            result->setProperty("accepted", true);
+            done(makeV2Ack(requestId, juce::var(result.get())));
+        })
         .withResourceProvider([](const juce::String& path) -> std::optional<juce::WebBrowserComponent::Resource>
         {
-            juce::ignoreUnused(path);
             int size = 0;
-            const auto* data = BinaryData::getNamedResource("index_html", size);
+            const auto* data = path.containsIgnoreCase("legacy")
+                ? BinaryData::getNamedResource("index_html", size)
+                : BinaryDataV2::getNamedResource("index_html", size);
             if (data == nullptr || size <= 0)
                 return std::nullopt;
             juce::WebBrowserComponent::Resource resource;
@@ -310,6 +483,7 @@ void CreativeSamplerAudioProcessorEditor::timerCallback()
         metadataLabel.setText("WAV and AIFF  /  mono or stereo", juce::dontSendNotification);
     }
     repaint();
+    publishUiV2Events();
 
 }
 
@@ -439,9 +613,282 @@ juce::var CreativeSamplerAudioProcessorEditor::webViewState() const
     return juce::var(state.get());
 }
 
+juce::var CreativeSamplerAudioProcessorEditor::webViewV2Snapshot(const juce::String& requestId)
+{
+    auto snapshot = makeObject();
+    snapshot->setProperty("protocolVersion", 2);
+    snapshot->setProperty("type", "snapshot");
+    snapshot->setProperty("sequence", uint64String(webUiV2Sequence++));
+
+    const auto importStatus = audioProcessor.importStatus();
+    const auto isLoading = importStatus.startsWith("Loading ");
+    const auto isError = importStatus.containsIgnoreCase("failed")
+        || importStatus.containsIgnoreCase("could not")
+        || importStatus.containsIgnoreCase("not enough memory");
+    auto app = makeObject();
+    app->setProperty("status", isLoading ? "loading" : isError ? "error" : "ready");
+    app->setProperty("message", isLoading || isError || !audioProcessor.hasSample()
+        ? juce::var(importStatus) : juce::var());
+    snapshot->setProperty("app", juce::var(app.get()));
+
+    const auto sampleId = audioProcessor.sliceEngineForUi().sampleId();
+    const auto* loadedMetadata = (!isLoading && audioProcessor.currentSampleMetadata())
+        ? &*audioProcessor.currentSampleMetadata() : nullptr;
+    if (loadedMetadata != nullptr && sampleId != 0)
+    {
+        auto sample = makeObject();
+        sample->setProperty("id", uint64String(sampleId));
+        sample->setProperty("revision", "1");
+        sample->setProperty("fileName", loadedMetadata->fileName);
+        sample->setProperty("durationSeconds", loadedMetadata->durationSeconds());
+        sample->setProperty("sampleRate", loadedMetadata->sampleRate);
+        sample->setProperty("sampleCount", loadedMetadata->sampleCount);
+        sample->setProperty("channelCount", loadedMetadata->channelCount);
+        sample->setProperty("bitDepth", loadedMetadata->bitDepth > 0
+            ? juce::var(loadedMetadata->bitDepth) : juce::var());
+        snapshot->setProperty("sample", juce::var(sample.get()));
+
+        auto slices = juce::Array<juce::var>();
+        for (const auto& slice : audioProcessor.sliceEngineForUi().slices())
+        {
+            auto item = makeObject();
+            item->setProperty("id", uint64String(slice.id));
+            item->setProperty("startSample", slice.startSample);
+            item->setProperty("endSample", slice.endSample);
+            item->setProperty("midiNote", slice.midiNote);
+            auto parameters = makeObject();
+            parameters->setProperty("volume", slice.parameters.volume);
+            parameters->setProperty("pan", slice.parameters.pan);
+            parameters->setProperty("pitchSemitones", slice.parameters.pitchSemitones);
+            auto envelope = makeObject();
+            envelope->setProperty("attackSeconds", slice.parameters.envelope.attackSeconds);
+            envelope->setProperty("decaySeconds", slice.parameters.envelope.decaySeconds);
+            envelope->setProperty("sustainLevel", slice.parameters.envelope.sustainLevel);
+            envelope->setProperty("releaseSeconds", slice.parameters.envelope.releaseSeconds);
+            parameters->setProperty("envelope", juce::var(envelope.get()));
+            item->setProperty("parameters", juce::var(parameters.get()));
+            slices.add(juce::var(item.get()));
+        }
+        snapshot->setProperty("slices", slices);
+        snapshot->setProperty("sliceRevision", uint64String(audioProcessor.sliceEngineForUi().revision()));
+
+        const auto result = audioProcessor.currentAnalysisResult();
+        if (result.identity.sampleId == sampleId)
+        {
+            auto analysis = makeObject();
+            analysis->setProperty("sampleId", uint64String(result.identity.sampleId));
+            analysis->setProperty("generation", uint64String(result.identity.generation));
+            analysis->setProperty("status", analysisStatusName(result.status));
+            analysis->setProperty("error", result.error.isNotEmpty() ? juce::var(result.error) : juce::var());
+
+            if (result.bpm)
+            {
+                auto bpm = makeObject();
+                bpm->setProperty("value", result.bpm->effectiveValue()
+                    ? juce::var(*result.bpm->effectiveValue()) : juce::var());
+                bpm->setProperty("confidence", result.bpm->confidence);
+                bpm->setProperty("score", result.bpm->score);
+                bpm->setProperty("detectionStatus", bpmStatusName(result.bpm->detectionStatus));
+                analysis->setProperty("bpm", juce::var(bpm.get()));
+            }
+            else analysis->setProperty("bpm", juce::var());
+
+            if (result.key)
+            {
+                auto key = makeObject();
+                key->setProperty("tonic", result.key->tonic
+                    ? juce::var(pitchClassName(*result.key->tonic)) : juce::var());
+                key->setProperty("mode", result.key->mode
+                    ? juce::var(*result.key->mode == ScaleMode::minor ? "minor" : "major") : juce::var());
+                key->setProperty("confidence", result.key->confidence);
+                key->setProperty("score", result.key->score);
+                key->setProperty("detectionStatus", keyStatusName(result.key->detectionStatus));
+                analysis->setProperty("key", juce::var(key.get()));
+            }
+            else analysis->setProperty("key", juce::var());
+
+            if (result.transients)
+            {
+                constexpr size_t maximumTransientMarkers = 2048;
+                const auto& events = result.transients->positions;
+                const auto markerCount = std::min(events.size(), maximumTransientMarkers);
+                auto positions = juce::Array<juce::var>();
+                for (size_t i = 0; i < markerCount; ++i)
+                {
+                    const auto eventIndex = markerCount == events.size()
+                        ? i : (i * events.size()) / markerCount;
+                    const auto& event = events[eventIndex];
+                    auto point = makeObject();
+                    point->setProperty("samplePosition", event.samplePosition);
+                    point->setProperty("strength", event.strength);
+                    point->setProperty("confidence", event.confidence
+                        ? juce::var(*event.confidence) : juce::var());
+                    positions.add(juce::var(point.get()));
+                }
+                auto transients = makeObject();
+                transients->setProperty("sampleRate", result.transients->sampleRate);
+                transients->setProperty("sampleCount", result.transients->sampleCount);
+                transients->setProperty("totalEventCount", static_cast<juce::int64>(result.transients->totalEventCount));
+                transients->setProperty("truncated", result.transients->detectionStatus == TransientDetectionStatus::truncated
+                    || events.size() < result.transients->totalEventCount || events.size() > maximumTransientMarkers);
+                transients->setProperty("positions", positions);
+                analysis->setProperty("transients", juce::var(transients.get()));
+            }
+            else analysis->setProperty("transients", juce::var());
+            snapshot->setProperty("analysis", juce::var(analysis.get()));
+        }
+        else snapshot->setProperty("analysis", juce::var());
+
+        auto transport = makeObject();
+        transport->setProperty("status", audioProcessor.isBaseSamplePlaying() ? "playing" : "stopped");
+        const auto position = audioProcessor.playbackPositionSeconds() * loadedMetadata->sampleRate;
+        transport->setProperty("positionSamples", juce::jlimit(0.0,
+            static_cast<double>(loadedMetadata->sampleCount), position));
+        snapshot->setProperty("sampleTransport", juce::var(transport.get()));
+    }
+    else
+    {
+        snapshot->setProperty("sample", juce::var());
+        snapshot->setProperty("slices", juce::Array<juce::var>());
+        snapshot->setProperty("sliceRevision", juce::var());
+        snapshot->setProperty("analysis", juce::var());
+        snapshot->setProperty("sampleTransport", juce::var());
+    }
+    snapshot->setProperty("activeVoices", juce::var());
+
+    return makeV2Ack(requestId, juce::var(snapshot.get()));
+}
+
+juce::var CreativeSamplerAudioProcessorEditor::webViewV2Waveform(const juce::var& request) const
+{
+    juce::String requestId, errorCode, errorMessage;
+    if (!getV2Request(request, requestId, errorCode, errorMessage))
+        return makeV2Error(requestId, errorCode, errorMessage);
+    const auto* object = request.getDynamicObject();
+    const auto sampleId = object->getProperty("sampleId").toString();
+    const auto expectedSampleId = uint64String(audioProcessor.sliceEngineForUi().sampleId());
+    if (!audioProcessor.hasSample() || sampleId.isEmpty())
+        return makeV2Error(requestId, "NO_SAMPLE", "No sample is currently loaded.");
+    if (sampleId != expectedSampleId)
+        return makeV2Error(requestId, "STALE_SAMPLE", "The sample changed before waveform data was requested.", true);
+
+    const auto rawBuckets = object->getProperty("maxBuckets");
+    if ((!rawBuckets.isInt() && !rawBuckets.isInt64() && !rawBuckets.isDouble())
+        || !std::isfinite(rawBuckets.toString().getDoubleValue()))
+        return makeV2Error(requestId, "INVALID_ARGUMENT", "maxBuckets must be a finite number.");
+    const auto maximumBuckets = static_cast<int>(juce::jlimit(64.0, 2048.0, rawBuckets.toString().getDoubleValue()));
+    const auto data = audioProcessor.currentWaveform();
+    const auto metadata = audioProcessor.currentSampleMetadata();
+    if (data == nullptr || metadata == std::nullopt || data->levelCount() <= 0)
+        return makeV2Error(requestId, "INTERNAL", "Waveform data is not available yet.", true);
+
+    const auto framesPerPixel = static_cast<double>(metadata->sampleCount)
+        / static_cast<double>(maximumBuckets);
+    const auto levelIndex = data->chooseLevel(framesPerPixel);
+    const auto& level = data->level(levelIndex);
+    auto channels = juce::Array<juce::var>();
+    for (const auto& channel : level.channels)
+    {
+        auto peaks = juce::Array<juce::var>();
+        const auto bucketCount = std::min(static_cast<size_t>(maximumBuckets), channel.size());
+        for (size_t bucket = 0; bucket < bucketCount; ++bucket)
+        {
+            const auto begin = bucket * channel.size() / bucketCount;
+            const auto end = std::max(begin + 1, (bucket + 1) * channel.size() / bucketCount);
+            auto minimum = channel[begin].minimum;
+            auto maximum = channel[begin].maximum;
+            for (auto index = begin + 1; index < end; ++index)
+            {
+                minimum = std::min(minimum, channel[index].minimum);
+                maximum = std::max(maximum, channel[index].maximum);
+            }
+            auto peak = makeObject();
+            peak->setProperty("min", minimum);
+            peak->setProperty("max", maximum);
+            peaks.add(juce::var(peak.get()));
+        }
+        channels.add(peaks);
+    }
+
+    auto waveform = makeObject();
+    waveform->setProperty("protocolVersion", 2);
+    waveform->setProperty("type", "waveform");
+    waveform->setProperty("requestId", requestId);
+    waveform->setProperty("sampleId", expectedSampleId);
+    waveform->setProperty("framesPerPeak", level.framesPerPeak);
+    waveform->setProperty("channels", channels);
+    return makeV2Ack(requestId, juce::var(waveform.get()));
+}
+
+juce::var CreativeSamplerAudioProcessorEditor::webViewV2Transport(const juce::var& request) const
+{
+    juce::String requestId, errorCode, errorMessage;
+    if (!getV2Request(request, requestId, errorCode, errorMessage))
+        return makeV2Error(requestId, errorCode, errorMessage);
+    auto transport = makeObject();
+    transport->setProperty("protocolVersion", 2);
+    transport->setProperty("type", "transport");
+    transport->setProperty("requestId", requestId);
+    const auto& metadata = audioProcessor.currentSampleMetadata();
+    const auto sampleId = audioProcessor.sliceEngineForUi().sampleId();
+    transport->setProperty("sampleId", metadata && sampleId != 0
+        ? juce::var(uint64String(sampleId)) : juce::var());
+    transport->setProperty("status", metadata && audioProcessor.isBaseSamplePlaying() ? "playing" : "stopped");
+    const auto position = metadata ? audioProcessor.playbackPositionSeconds() * metadata->sampleRate : 0.0;
+    transport->setProperty("positionSamples", metadata
+        ? juce::jlimit(0.0, static_cast<double>(metadata->sampleCount), position) : 0.0);
+    return makeV2Ack(requestId, juce::var(transport.get()));
+}
+
+void CreativeSamplerAudioProcessorEditor::publishUiV2Events()
+{
+    if (!uiV2Ready || webView == nullptr)
+        return;
+
+    const auto sampleId = audioProcessor.sliceEngineForUi().sampleId();
+    const auto sliceRevision = audioProcessor.sliceEngineForUi().revision();
+    const auto analysisStamp = audioProcessor.currentAnalysisStamp();
+    const auto fingerprint = uint64String(sampleId) + ":" + uint64String(sliceRevision) + ":"
+        + audioProcessor.importStatus() + ":" + uint64String(analysisStamp.identity.sampleId) + ":"
+        + uint64String(analysisStamp.identity.generation) + ":" + analysisStatusName(analysisStamp.status);
+
+    if (fingerprint != lastUiV2Fingerprint)
+    {
+        lastUiV2Fingerprint = fingerprint;
+        const auto response = webViewV2Snapshot("event");
+        if (const auto* responseObject = response.getDynamicObject())
+            webView->emitEventIfBrowserIsVisible("samplerStateSnapshot", responseObject->getProperty("result"));
+    }
+
+    const auto& metadata = audioProcessor.currentSampleMetadata();
+    const auto currentSample = metadata && sampleId != 0 ? uint64String(sampleId) : juce::String();
+    const auto playing = metadata && audioProcessor.isBaseSamplePlaying();
+    if (playing || !hasUiV2TransportState || currentSample != lastUiV2TransportSample
+        || playing != lastUiV2TransportPlaying)
+    {
+        hasUiV2TransportState = true;
+        lastUiV2TransportSample = currentSample;
+        lastUiV2TransportPlaying = playing;
+        auto transport = makeObject();
+        transport->setProperty("protocolVersion", 2);
+        transport->setProperty("type", "transportUpdate");
+        transport->setProperty("sequence", uint64String(webUiV2Sequence++));
+        transport->setProperty("sampleId", currentSample.isNotEmpty() ? juce::var(currentSample) : juce::var());
+        transport->setProperty("status", playing ? "playing" : "stopped");
+        const auto position = metadata ? audioProcessor.playbackPositionSeconds() * metadata->sampleRate : 0.0;
+        transport->setProperty("positionSamples", metadata
+            ? juce::jlimit(0.0, static_cast<double>(metadata->sampleCount), position) : 0.0);
+        webView->emitEventIfBrowserIsVisible("samplerTransportUpdate", juce::var(transport.get()));
+    }
+}
+
 void CreativeSamplerAudioProcessorEditor::loadWebUi()
 {
     if (webView == nullptr)
         return;
+#if CREATIVE_SAMPLER_USE_UI_V2
     webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
+#else
+    webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot() + "legacy");
+#endif
 }

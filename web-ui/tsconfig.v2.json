@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "incremental": false
+  },
+  "include": ["src/vite-env.d.ts", "src-v2/app", "src-v2/bridge", "src-v2/components", "src-v2/design", "src-v2/demo", "src-v2/showcase"]
+}

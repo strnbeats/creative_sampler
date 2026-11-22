@@ -46,6 +46,7 @@ public:
     void stopSample() noexcept { playbackEngine.stop(); slicePlaybackEngine.stopVoices(); }
     juce::AudioProcessorValueTreeState& parameterState() noexcept { return parameters; }
     double playbackPositionSeconds() const noexcept { return playbackEngine.positionSeconds(); }
+    bool isBaseSamplePlaying() const noexcept { return playbackEngine.isPlaying(); }
     bool isSamplePlaying() const noexcept
     {
         return playbackEngine.isPlaying() || slicePlaybackEngine.activeVoiceCount() != 0;
