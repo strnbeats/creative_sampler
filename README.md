@@ -7,12 +7,13 @@
 Нужны CMake 3.22+, совместимый C++20 toolchain и JUCE 8 или новее, доступный как CMake package либо исходный каталог.
 
 ```sh
+npm ci --prefix web-ui
 cmake -S . -B build -DJUCE_SOURCE_DIR=/path/to/JUCE
 cmake --build build --config Release
 ctest --test-dir build --output-on-failure
 ```
 
-Если JUCE установлен с CMake package config, вместо `JUCE_SOURCE_DIR` передайте путь к его package config через `JUCE_DIR`.
+Перед CMake configure установите npm зависимости командой выше: конфигурация автоматически собирает локальный production frontend и встраивает его в приложение. Если JUCE установлен с CMake package config, вместо `JUCE_SOURCE_DIR` передайте путь к его package config через `JUCE_DIR`.
 
 Поддерживаются macOS Standalone и VST3 targets. Цель AU не включена.
 
@@ -138,12 +139,22 @@ Slice volume и velocity масштабируют сигнал голоса. Mon
 
 ### UI technology audit
 
-Для текущего waveform editor выбран **Native JUCE**. Он переиспользует существующий plugin UI и даёт прямой message-thread hit-testing/drag без browser bridge. Сотни границ не требуют WebGL: их число мало по сравнению с waveform peaks, а waveform уже рисуется на уровне экранных пикселей. Пользовательские компоненты и input-логика остаются в C++.
+Изначально для waveform editor был выбран **Native JUCE**: он переиспользует plugin UI и даёт прямой message-thread hit-testing/drag без browser bridge. В Phase UI-1 добавлен отдельный React/JUCE WebView prototype, Native JUCE UI сохранён в проекте. Это проверка гибридного подхода, а не завершённая миграция.
 
 WebView даёт быстрый CSS/SVG/Canvas/WebGL workflow и богатый набор web tooling, но требует отдельного JS↔C++ контракта, встраивания frontend ресурсов и платформенной валидации. В JUCE backend зависит от платформы; Windows WebView2 настраивается отдельно и требует учесть наличие и распространение runtime. Это увеличивает packaging и host-compatibility работу для VST3/Standalone.
 
-Hybrid имеет смысл только при наличии конкретных web-first экранов. Если позднее появятся сложные динамические панели, можно оставить аудио, параметры и waveform interaction в Native JUCE, а независимые информационные панели рассмотреть для WebView. Для этого SliceEngine уже отделён от компонентов интерфейса; текущие view callbacks не являются частью модели.
+Prototype использует JUCE WebView для отдельной рабочей композиции, а backend, модели, параметры и DSP остаются в C++. Waveform отображается по подготовленным peaks; C++ bridge передаёт sample/slice state и маршрутизирует доступные команды. Производительность и совместимость WebView в VST3 host и на Windows ещё требуют отдельной проверки.
 
 ## Phase 3C.2 — параметры выбранного слайса
 
 Под waveform расположены семь регуляторов. Перетаскивание меняет значение, двойной щелчок возвращает значение по умолчанию. Панель следует за выбором в waveform. Новые значения применяются к следующим нотам после публикации снимка процессором. Время отображается в миллисекундах или секундах, громкость и sustain — в процентах, высота — в полутонах.
+
+## Phase UI-1 — WebView prototype (не завершена)
+
+Frontend находится в `web-ui/` и собирается React + TypeScript + Vite + Tailwind в один `dist/index.html`; ресурсы встраиваются в `BinaryData`, поэтому запущенный Release UI не использует Vite server, CDN или внешние шрифты. Для чистой сборки сначала выполните `npm ci --prefix web-ui`; затем CMake configure автоматически запускает production build и встраивает страницу. После изменения frontend повторно выполните CMake configure, чтобы обновить embedded bundle.
+
+На macOS Standalone вручную проверена загрузка страницы из JUCE resource provider, показ импортированного WAV (имя, длительность, sample rate, каналы), waveform peaks, Slice list и параметров. Bridge использует JUCE `withNativeFunction` callbacks на message thread: передаёт состояние, Slice ID и выбранный Slice, а также связывает Import, Play/Stop, Split/Delete/Reset и редактирование Volume/Pan с существующим C++ backend. В C++ выдаются актуальные Pitch/ADSR и результаты завершённого анализа для текущего Sample ID; до завершения анализа BPM, Key и число транзиентов остаются пустыми. Audio thread не вызывает WebView и не передаёт frontend состояние.
+
+Проверены вручную импорт файла через React, split/reset, обновление Slice list, выбор Slice и изменение Volume/Pan с отражением тех же значений в существующей Native JUCE панели. Frontend хранит только временное состояние отображения; модель параметров и публикация immutable playback snapshot остаются в C++. Native JUCE UI остаётся в проекте как fallback, но в текущей Standalone-композиции перекрыт WebView.
+
+Ограничения: веб-интерфейс пока не реализует перетаскивание границ/создание диапазона мышью, полноценное удаление есть отдельной командой, но ручное редактирование waveform и полноценные zoom/scroll отсутствуют; часть навигации и Analyze-кнопка — только визуальные элементы. Повторное открытие редактора, DAW host smoke test, VST3 с WebView и Windows/WebView2 не подтверждены. Phase UI-1 остаётся незавершённой до проверки lifecycle/reload, production VST3 host и платформенного развёртывания.

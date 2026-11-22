@@ -181,6 +181,24 @@ CreativeSamplerAudioProcessorEditor::CreativeSamplerAudioProcessorEditor(
             audioProcessor.stopSample();
             done(webViewState());
         })
+        .withNativeFunction("splitSlice", [this](const juce::Array<juce::var>&,
+                                                   juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            (void) waveformEditor.splitSelectedAtMidpoint();
+            done(webViewState());
+        })
+        .withNativeFunction("resetSlices", [this](const juce::Array<juce::var>&,
+                                                    juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            (void) waveformEditor.resetSlices();
+            done(webViewState());
+        })
+        .withNativeFunction("deleteSlice", [this](const juce::Array<juce::var>&,
+                                                    juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            (void) waveformEditor.deleteSelectedSlice();
+            done(webViewState());
+        })
         .withResourceProvider([](const juce::String& path) -> std::optional<juce::WebBrowserComponent::Resource>
         {
             juce::ignoreUnused(path);
@@ -353,6 +371,15 @@ juce::var CreativeSamplerAudioProcessorEditor::webViewState() const
     state->setProperty("sampleLoaded", audioProcessor.hasSample());
     state->setProperty("status", audioProcessor.importStatus());
     state->setProperty("playing", audioProcessor.isSamplePlaying());
+    state->setProperty("file", "DROP A SAMPLE TO BEGIN");
+    state->setProperty("duration", 0.0);
+    state->setProperty("sampleRate", 0);
+    state->setProperty("channels", 0);
+    state->setProperty("selectedSliceId", static_cast<juce::int64>(waveformEditor.selectedId()));
+    state->setProperty("analysisReady", false);
+    state->setProperty("bpm", juce::var());
+    state->setProperty("key", juce::var());
+    state->setProperty("transientCount", juce::var());
     auto slices = juce::Array<juce::var>();
     for (const auto& slice : audioProcessor.sliceEngineForUi().slices())
     {
@@ -363,9 +390,26 @@ juce::var CreativeSamplerAudioProcessorEditor::webViewState() const
         item->setProperty("note", slice.midiNote);
         item->setProperty("volume", slice.parameters.volume);
         item->setProperty("pan", slice.parameters.pan);
+        item->setProperty("pitch", slice.parameters.pitchSemitones);
+        item->setProperty("attack", slice.parameters.envelope.attackSeconds);
+        item->setProperty("decay", slice.parameters.envelope.decaySeconds);
+        item->setProperty("sustain", slice.parameters.envelope.sustainLevel);
+        item->setProperty("release", slice.parameters.envelope.releaseSeconds);
         slices.add(juce::var(item.get()));
     }
     state->setProperty("slices", slices);
+    const auto analysis = audioProcessor.currentAnalysisResult();
+    if (analysis.identity.sampleId == audioProcessor.sliceEngineForUi().sampleId()
+        && analysis.status == AnalysisStatus::completed)
+    {
+        state->setProperty("analysisReady", true);
+        if (analysis.bpm && analysis.bpm->effectiveValue())
+            state->setProperty("bpm", *analysis.bpm->effectiveValue());
+        if (analysis.key && analysis.key->isValid())
+            state->setProperty("key", analysis.key->fullName());
+        if (analysis.transients)
+            state->setProperty("transientCount", static_cast<juce::int64>(analysis.transients->totalEventCount));
+    }
     auto peaks = juce::Array<juce::var>();
     if (const auto data = audioProcessor.currentWaveform(); data != nullptr && data->levelCount() > 0
         && audioProcessor.currentSampleMetadata())
