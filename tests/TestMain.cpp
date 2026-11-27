@@ -1,5 +1,7 @@
 #include <juce_core/juce_core.h>
 #include "AnalysisInfrastructureTests.h"
+#include "AutoSlicePlannerTests.h"
+#include "BeatGridEstimatorTests.h"
 #include "ADSREnvelopeTests.h"
 #include "BPMAnalyzerTests.h"
 #include "KeyAnalyzerTests.h"
@@ -27,6 +29,24 @@ int main(int argc, char** argv)
     runner.setAssertOnFailure(false);
     runner.setPassesAreLogged(true);
     juce::Array<juce::UnitTest*> tests;
+    if (argc > 1 && juce::String(argv[1]) == "--auto-slicing-test")
+    {
+        tests.add(getAutoSlicePlannerTest());
+        runner.runTests(tests);
+        for (auto i = 0; i < runner.getNumResults(); ++i)
+            if (const auto* result = runner.getResult(i); result != nullptr && result->failures > 0)
+                return 1;
+        return 0;
+    }
+    if (argc > 1 && juce::String(argv[1]) == "--beat-grid-test")
+    {
+        tests.add(getBeatGridEstimatorTest());
+        runner.runTests(tests);
+        for (auto i = 0; i < runner.getNumResults(); ++i)
+            if (const auto* result = runner.getResult(i); result != nullptr && result->failures > 0)
+                return 1;
+        return 0;
+    }
     if (argc > 1 && juce::String(argv[1]) == "--transient-test")
     {
         tests.add(getTransientAnalyzerTest());
@@ -37,6 +57,8 @@ int main(int argc, char** argv)
         return 0;
     }
     tests.add(getAnalysisInfrastructureTest());
+    tests.add(getAutoSlicePlannerTest());
+    tests.add(getBeatGridEstimatorTest());
     tests.add(getADSREnvelopeTest());
     tests.add(getBPMAnalyzerTest());
     tests.add(getKeyAnalyzerTest());

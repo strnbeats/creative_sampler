@@ -60,6 +60,7 @@ target_sources(CreativeSampler PRIVATE
     src/analysis/BPMAnalyzer.cpp
     src/analysis/KeyAnalyzer.cpp
     src/analysis/TransientAnalyzer.cpp
+    src/auto_slicing/BeatGridEstimator.cpp
     src/dsp/BandlimitedResampler.cpp
     src/dsp/ADSREnvelope.cpp
     src/sample/SampleStorage.cpp
@@ -111,6 +112,8 @@ if (BUILD_TESTING)
         tests/SliceParametersPanelTests.cpp
         tests/TestMain.cpp
         tests/AnalysisInfrastructureTests.cpp
+        tests/AutoSlicePlannerTests.cpp
+        tests/BeatGridEstimatorTests.cpp
         tests/BPMAnalyzerTests.cpp
         tests/KeyAnalyzerTests.cpp
         tests/TransientAnalyzerTests.cpp
@@ -125,6 +128,8 @@ if (BUILD_TESTING)
         src/analysis/BPMAnalyzer.cpp
         src/analysis/KeyAnalyzer.cpp
         src/analysis/TransientAnalyzer.cpp
+        src/auto_slicing/AutoSlicePlanner.cpp
+        src/auto_slicing/BeatGridEstimator.cpp
         src/dsp/BandlimitedResampler.cpp
         src/dsp/ADSREnvelope.cpp
         src/sample/SampleStorage.cpp
@@ -149,4 +154,6 @@ if (BUILD_TESTING)
         juce::juce_recommended_warning_flags
     )
     add_test(NAME CreativeSamplerTests COMMAND CreativeSamplerTests)
+    add_test(NAME AutoSlicePlannerTests COMMAND CreativeSamplerTests --auto-slicing-test)
+    add_test(NAME BeatGridEstimatorTests COMMAND CreativeSamplerTests --beat-grid-test)
 endif()
