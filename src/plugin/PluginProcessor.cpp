@@ -88,6 +88,7 @@ CreativeSamplerAudioProcessor::createParameterLayout()
 
 void CreativeSamplerAudioProcessor::importFile(const juce::File& file)
 {
+    currentImportStatusKind = ImportStatus::loading;
     currentImportStatus = "Loading " + file.getFileName() + "…";
     importService.loadAsync(file);
 }
@@ -101,6 +102,7 @@ void CreativeSamplerAudioProcessor::handleImportResult(AudioImportResult result)
 {
     if (!result.succeeded())
     {
+        currentImportStatusKind = ImportStatus::failed;
         currentImportStatus = result.error.isEmpty() ? "Audio import failed." : result.error;
         return;
     }
@@ -112,12 +114,14 @@ void CreativeSamplerAudioProcessor::handleImportResult(AudioImportResult result)
     }
     catch (const std::bad_alloc&)
     {
+        currentImportStatusKind = ImportStatus::failed;
         currentImportStatus = "Not enough memory to share the imported Sample.";
         return;
     }
 
     if (!playbackEngine.submitSharedSample(sample))
     {
+        currentImportStatusKind = ImportStatus::failed;
         currentImportStatus = "Not enough memory to prepare the Sample for playback.";
         return;
     }
@@ -144,6 +148,7 @@ void CreativeSamplerAudioProcessor::handleImportResult(AudioImportResult result)
     {
         // Playback remains available even if the background analysis request cannot be allocated.
     }
+    currentImportStatusKind = ImportStatus::ready;
     currentImportStatus = "Ready";
 }
 
@@ -163,11 +168,13 @@ void CreativeSamplerAudioProcessor::publishSliceSnapshotIfNeeded()
     auto snapshot = SlicePlaybackSnapshot::create(currentSample, sliceEngine.sampleId(), sliceEngine);
     if (snapshot == nullptr)
     {
+        currentImportStatusKind = ImportStatus::failed;
         currentImportStatus = "Could not prepare the slice map for playback.";
         return;
     }
     if (!slicePlaybackEngine.publishSnapshot(std::move(snapshot)))
     {
+        currentImportStatusKind = ImportStatus::failed;
         currentImportStatus = "Could not publish the slice map for playback.";
         return;
     }

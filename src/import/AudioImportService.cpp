@@ -2,6 +2,23 @@
 #include <limits>
 #include <new>
 
+namespace
+{
+bool formatManagerSupportsExtension(const juce::AudioFormatManager& formats,
+                                    const juce::String& extension)
+{
+    for (int index = 0; index < formats.getNumKnownFormats(); ++index)
+        for (auto knownExtension : formats.getKnownFormat(index)->getFileExtensions())
+        {
+            if (knownExtension.startsWithChar('.'))
+                knownExtension = knownExtension.substring(1);
+            if (knownExtension.equalsIgnoreCase(extension))
+                return true;
+        }
+    return false;
+}
+}
+
 AudioImportResult AudioImporter::load(const juce::File& file,
                                       const std::function<bool()>& shouldCancel) const
 {
@@ -18,20 +35,28 @@ AudioImportResult AudioImporter::load(const juce::File& file,
         result.error = "The audio file is empty.";
         return result;
     }
-    if (!file.hasFileExtension("wav;aif;aiff"))
+    const auto isCaf = file.hasFileExtension("caf");
+    if (!isCaf && !file.hasFileExtension("wav;aif;aiff"))
     {
-        result.error = "Unsupported format. Choose a WAV or AIFF file.";
+        result.error = "Unsupported audio format. Choose a WAV or AIFF file, or a CAF file on macOS.";
         return result;
     }
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
+    if (isCaf && !formatManagerSupportsExtension(formats, "caf"))
+    {
+        result.error = "CAF files are not supported by the audio formats available on this platform. Choose WAV or AIFF.";
+        return result;
+    }
     std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
     if (shouldCancel && shouldCancel())
         return result;
     if (reader == nullptr)
     {
-        result.error = "The audio file is damaged or could not be decoded.";
+        result.error = isCaf
+            ? "The CAF file is damaged or uses an audio codec that this system cannot decode."
+            : "The audio file is damaged or could not be decoded.";
         return result;
     }
     if ((reader->numChannels != 1 && reader->numChannels != 2)
@@ -66,7 +91,8 @@ AudioImportResult AudioImporter::load(const juce::File& file,
             const auto count = juce::jmin(readChunkSize, frames - offset);
             if (!reader->read(&decoded, offset, count, offset, true, true))
             {
-                result.error = "An error occurred while reading the audio data.";
+                result.error = isCaf ? "The CAF audio data could not be decoded."
+                                     : "An error occurred while reading the audio data.";
                 return result;
             }
             offset += count;

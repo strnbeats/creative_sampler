@@ -240,7 +240,11 @@ void WaveformEditorComponent::paint(juce::Graphics& graphics)
     {
         graphics.setColour(muted);
         graphics.setFont(juce::FontOptions(15.0f));
+#if JUCE_MAC || JUCE_IOS
+        graphics.drawText("Import or drop a WAV / AIFF / CAF file", getLocalBounds().reduced(18),
+#else
         graphics.drawText("Import or drop a WAV / AIFF file", getLocalBounds().reduced(18),
+#endif
                           juce::Justification::centred);
     }
 }

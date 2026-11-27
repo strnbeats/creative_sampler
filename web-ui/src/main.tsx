@@ -5,7 +5,7 @@ import './style.css';
 
 type Slice = { id: number; start: number; end: number; note: number; volume: number; pan: number; pitch: number; attack: number; decay: number; sustain: number; release: number };
 type State = { sampleLoaded: boolean; status: string; playing: boolean; file: string; duration: number; sampleRate: number; channels: number; slices: Slice[]; peaks: number[]; selectedSliceId: number; analysisReady: boolean; bpm: number | null; key: string | null; transientCount: number | null };
-const empty: State = { sampleLoaded: false, status: 'Choose a WAV or AIFF sample to begin.', playing: false, file: 'DROP A SAMPLE TO BEGIN', duration: 0, sampleRate: 0, channels: 0, slices: [], peaks: [], selectedSliceId: 0, analysisReady: false, bpm: null, key: null, transientCount: null };
+const empty: State = { sampleLoaded: false, status: 'Choose WAV or AIFF (CAF on macOS) to begin.', playing: false, file: 'DROP A SAMPLE TO BEGIN', duration: 0, sampleRate: 0, channels: 0, slices: [], peaks: [], selectedSliceId: 0, analysisReady: false, bpm: null, key: null, transientCount: null };
 function App() {
   const [state, setState] = useState(empty), [selected, setSelected] = useState(0);
   const requestSerial = useRef(0);

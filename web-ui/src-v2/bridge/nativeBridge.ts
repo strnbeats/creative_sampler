@@ -1,4 +1,4 @@
-import { protocolVersion, type CommandAck, type NativeSnapshot, type RequestId, type SampleId, type TransportDto, type WaveformDto } from './protocol';
+import { BridgeCommandError, protocolVersion, type CommandAck, type NativeSnapshot, type RequestId, type SampleId, type SetSliceParameterRequest, type TransportAction, type TransportCommandResult, type TransportDto, type WaveformDto } from './protocol.ts';
 
 type JuceBackend = {
   emitEvent: (eventId: string, payload: unknown) => void;
@@ -62,7 +62,7 @@ function invoke<T>(name: string, payload: Record<string, unknown>): Promise<T> {
 async function unwrap<T>(name: string, id: RequestId, response: CommandAck<T>): Promise<T> {
   if (response?.protocolVersion !== protocolVersion || response.type !== 'ack' || response.requestId !== id)
     throw new Error(`Invalid response from '${name}'.`);
-  if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
+  if (!response.ok) throw new BridgeCommandError(response.error.code, response.error.message, response.error.retryable);
   return response.result;
 }
 
@@ -94,5 +94,18 @@ export const nativeBridge = {
     const id = requestId();
     const ack = await invoke<CommandAck<TransportDto>>('getUiV2Transport', { protocolVersion, requestId: id });
     return unwrap('getUiV2Transport', id, ack);
+  },
+  async controlTransport(action: TransportAction, sampleId: SampleId): Promise<TransportCommandResult> {
+    const id = requestId();
+    const ack = await invoke<CommandAck<TransportCommandResult>>('controlUiV2Transport', {
+      protocolVersion, requestId: id, action, sampleId,
+    });
+    return unwrap('controlUiV2Transport', id, ack);
+  },
+  async setSliceParameter(command: Omit<SetSliceParameterRequest, 'protocolVersion' | 'requestId'>): Promise<NativeSnapshot> {
+    const id = requestId();
+    const payload: SetSliceParameterRequest = { protocolVersion, requestId: id, ...command };
+    const ack = await invoke<CommandAck<NativeSnapshot>>('setUiV2SliceParameter', payload);
+    return unwrap('setUiV2SliceParameter', id, ack);
   },
 };

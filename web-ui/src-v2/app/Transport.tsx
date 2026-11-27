@@ -1,25 +1,25 @@
-import { Button } from '../components/Button';
-import { Metadata, Value } from '../components/Typography';
+import type { NativeSnapshot, SampleMetadataDto, TransportAction } from '../bridge/protocol';
 
-function formatTime(seconds: number) {
-  const minutes = Math.floor(seconds / 60);
-  const remainder = (seconds - minutes * 60).toFixed(2).padStart(5, '0');
-  return `${String(minutes).padStart(2, '0')}:${remainder}`;
-}
-
-export function Transport({ durationSeconds, positionSeconds, isPlaying, disabled }:
-  { durationSeconds: number; positionSeconds: number; isPlaying: boolean; disabled: boolean }) {
-  const progress = durationSeconds > 0 ? Math.min(1, Math.max(0, positionSeconds / durationSeconds)) : 0;
-  return <footer className="cs-transport-bar" aria-label="Демонстрационный транспорт">
-    <Button tone="transport" className={isPlaying ? 'is-playing' : ''} disabled
-      aria-label={isPlaying ? 'Воспроизведение Sample' : 'Sample остановлен'} aria-pressed={isPlaying}
-      title="Транспорт отображает состояние audio engine; управление будет подключено отдельным этапом">{isPlaying ? 'Ⅱ' : '▶'}</Button>
-    <Button tone="quiet" disabled title="Управление транспортом не входит в read-only этап">STOP</Button>
-    <Value className="cs-transport-time">{formatTime(positionSeconds)} <span>/ {formatTime(durationSeconds)}</span></Value>
-    <div className="cs-transport-track" aria-label={`Демонстрационная позиция ${Math.round(progress * 100)}%`} role="progressbar"
-      aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
-      <span style={{ width: `${progress * 100}%` }} />
+export function Transport({ sample, transport, busy, error, onAction }: {
+  sample: SampleMetadataDto | null; transport: NativeSnapshot['sampleTransport'];
+  busy: boolean; error: string | null; onAction: (action: TransportAction) => void;
+}) {
+  const position = sample && transport && sample.sampleRate > 0 ? transport.positionSamples / sample.sampleRate : null;
+  const playing = transport?.status === 'playing';
+  return <footer className="status" aria-label="Sample playback state">
+    <div className="transport">
+      <i className={playing ? 'is-playing' : ''} aria-hidden="true" />
+      <span>{!sample ? 'No sample' : !transport ? 'Playback status unavailable' : playing ? 'Playing' : 'Stopped'}</span>
+      {position !== null && sample && <span className="timecode">
+        <strong>{position.toFixed(2)}</strong> / {sample.durationSeconds.toFixed(2)} s
+      </span>}
     </div>
-    <Metadata className="cs-transport-master">SAMPLE TRANSPORT</Metadata>
+    <div className="transport-actions">
+      <button className="transport-control is-play" type="button" onClick={() => onAction('play')}
+        disabled={!sample || busy} aria-label="Play sample" title="Play sample">▶ <span>PLAY</span></button>
+      <button className="transport-control" type="button" onClick={() => onAction('stop')}
+        disabled={!sample || busy || !playing} aria-label="Stop sample" title="Stop sample">■ <span>STOP</span></button>
+      {error && <span className="transport-error" role="alert">{error}</span>}
+    </div>
   </footer>;
 }

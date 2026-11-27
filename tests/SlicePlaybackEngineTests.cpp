@@ -33,6 +33,56 @@ public:
 
     void runTest() override
     {
+        beginTest("Master gain and slice volume independently scale rendered voice RMS");
+        {
+            struct RenderResult { double rms; float sliceVolume; std::uint64_t snapshotRevision; };
+            const auto render = [](float masterVolume, float sliceVolume)
+            {
+                constexpr std::uint64_t sampleId = 899;
+                constexpr int frames = 8192;
+                SliceEngine model;
+                model.setSample(sampleId, frames);
+                const auto sliceId = model.slices().front().id;
+                auto parameters = model.find(sliceId)->parameters;
+                parameters.volume = sliceVolume;
+                parameters.envelope = { 0.0f, 0.0f, 1.0f, 0.01f };
+                model.setParameters(sliceId, parameters);
+                auto snapshot = SlicePlaybackSnapshot::create(makeSample(frames, 1, 0.25f), sampleId, model);
+                const auto revision = snapshot->revision();
+                SlicePlaybackEngine playback;
+                playback.setVolume(masterVolume);
+                playback.prepare(48000.0);
+                playback.setCurrentSampleId(sampleId);
+                playback.publishSnapshot(std::move(snapshot));
+                juce::AudioBuffer<float> output(2, frames);
+                juce::MidiBuffer midi;
+                midi.addEvent(juce::MidiMessage::noteOn(1, 60, 1.0f), 0);
+                playback.process(output, midi, false);
+                double energy = 0.0;
+                constexpr int first = 1024;
+                constexpr int last = 4096;
+                for (int frame = first; frame < last; ++frame)
+                {
+                    const auto sample = static_cast<double>(output.getSample(0, frame));
+                    energy += sample * sample;
+                }
+                const auto rms = std::sqrt(energy / static_cast<double>(last - first));
+                return RenderResult { rms, model.find(sliceId)->parameters.volume, revision };
+            };
+
+            const auto baseline = render(0.8f, 0.5f);
+            const auto masterChanged = render(0.4f, 0.5f);
+            const auto sliceChanged = render(0.8f, 0.25f);
+            expect(baseline.rms > 0.0);
+            expectWithinAbsoluteError(masterChanged.rms / baseline.rms, 0.5, 0.015);
+            expectWithinAbsoluteError(sliceChanged.rms / baseline.rms, 0.5, 0.015);
+            expectWithinAbsoluteError(baseline.sliceVolume, 0.5f, 1.0e-6f);
+            expectWithinAbsoluteError(masterChanged.sliceVolume, 0.5f, 1.0e-6f);
+            expectWithinAbsoluteError(sliceChanged.sliceVolume, 0.25f, 1.0e-6f);
+            expect(baseline.snapshotRevision != 0 && masterChanged.snapshotRevision != 0
+                   && sliceChanged.snapshotRevision != 0);
+        }
+
         beginTest("Panel edits preserve other fields and only new notes adopt the published pan");
         {
             SliceEngine model;
@@ -252,6 +302,56 @@ public:
                 expectWithinAbsoluteError(left, 0.6f, 1.0e-4f);
                 expectWithinAbsoluteError(right, 0.0f, 1.0e-6f);
             }
+        }
+
+        beginTest("Slice Attack, Decay, Sustain, and Release alter rendered voice amplitude");
+        {
+            constexpr auto sampleId = std::uint64_t { 516 };
+            constexpr auto sampleRate = 48000.0;
+            const auto render = [&](ADSRParameters envelopeParameters, int frameCount,
+                                    int noteOffAt = -1)
+            {
+                auto sample = makeSample(frameCount + 4096, 1, 0.5f, sampleRate);
+                SliceEngine model;
+                expect(model.setSample(sampleId, sample->metadata().sampleCount));
+                auto parameters = SliceParameters {};
+                parameters.envelope = envelopeParameters;
+                expect(model.setParameters(model.slices().front().id, parameters));
+                const auto snapshot = SlicePlaybackSnapshot::create(sample, sampleId, model);
+                expect(snapshot != nullptr);
+                SliceVoice voice;
+                expect(voice.start(snapshot.get(), 0, 60, 127, sampleRate, 0));
+                std::vector<float> output(static_cast<std::size_t>(frameCount));
+                for (int frame = 0; frame < frameCount; ++frame)
+                {
+                    if (frame == noteOffAt)
+                        voice.noteOff();
+                    float left = 0.0f;
+                    float right = 0.0f;
+                    if (!voice.renderFrame(left, right))
+                        break;
+                    output[static_cast<std::size_t>(frame)] = left;
+                }
+                return output;
+            };
+
+            const auto flatSignal = render({ 0.0f, 0.0f, 1.0f, 0.1f }, 1200);
+            const auto slowAttack = render({ 0.01f, 0.0f, 1.0f, 0.1f }, 1200);
+            expect(flatSignal[240] > slowAttack[240] * 1.8f);
+
+            const auto immediateDecay = render({ 0.0f, 0.0f, 0.2f, 0.1f }, 1600);
+            const auto slowDecay = render({ 0.0f, 0.02f, 0.2f, 0.1f }, 1600);
+            expect(immediateDecay[480] < slowDecay[480]);
+            expect(slowDecay[480] < slowDecay[0]);
+
+            const auto lowSustain = render({ 0.0f, 0.0f, 0.25f, 0.1f }, 1600);
+            const auto highSustain = render({ 0.0f, 0.0f, 0.75f, 0.1f }, 1600);
+            expectWithinAbsoluteError(highSustain[1000] / lowSustain[1000], 3.0f, 1.0e-4f);
+
+            const auto shortRelease = render({ 0.0f, 0.0f, 1.0f, 0.01f }, 900, 100);
+            const auto longRelease = render({ 0.0f, 0.0f, 1.0f, 0.1f }, 900, 100);
+            expectWithinAbsoluteError(shortRelease[700], 0.0f, 1.0e-6f);
+            expect(longRelease[700] > 0.05f);
         }
 
         beginTest("Note Off follows the slice ADSR, while Slice End forces a bounded safety fade");

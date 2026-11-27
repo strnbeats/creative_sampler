@@ -6,6 +6,8 @@
 #include "SampleEngineTests.h"
 #include "SliceEngineTests.h"
 #include "SlicePlaybackEngineTests.h"
+#include "UiV2SliceParameterCommandTests.h"
+#include "UiV2TransportCommandTests.h"
 #include "TransientAnalyzerTests.h"
 
 #include "SliceParametersPanelTests.h"
@@ -41,6 +43,8 @@ int main(int argc, char** argv)
     tests.add(getTransientAnalyzerTest());
     tests.add(getSliceParametersPanelTest());
     tests.add(getSliceEngineTest());
+    tests.add(getUiV2SliceParameterCommandTest());
+    tests.add(getUiV2TransportCommandTest());
     tests.add(getSlicePlaybackEngineTest());
     tests.add(getSampleEngineTest());
     runner.runTests(tests);

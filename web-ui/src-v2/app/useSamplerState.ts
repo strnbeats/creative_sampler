@@ -30,9 +30,31 @@ function requestedBucketCount() {
 
 export function useSamplerState() {
   const [state, setState] = useState(initialState);
+  const snapshotRef = useRef<NativeSnapshot | null>(null);
   const latestSnapshotRequest = useRef(0);
   const latestTransportSequence = useRef('0');
   const refreshNow = useRef<() => void>(() => undefined);
+
+  const acceptSnapshot = useCallback((snapshot: NativeSnapshot) => {
+    if (!validateSnapshot(snapshot)) throw new Error('The native snapshot did not match protocol v2.');
+    const current = snapshotRef.current;
+    if (current && BigInt(snapshot.sequence) <= BigInt(current.sequence)) return current;
+    snapshotRef.current = snapshot;
+    setState(previous => {
+      if (previous.snapshot && BigInt(snapshot.sequence) <= BigInt(previous.snapshot.sequence)) return previous;
+      return {
+        ...previous,
+        connection: 'connected', snapshot,
+        waveform: snapshot.sample?.id === previous.waveform?.sampleId ? previous.waveform : null,
+        transport: snapshot.sampleTransport && snapshot.sample
+          ? { protocolVersion: 2, type: 'transport', requestId: 'snapshot', sampleId: snapshot.sample.id,
+              status: snapshot.sampleTransport.status, positionSamples: snapshot.sampleTransport.positionSamples }
+          : null,
+        error: null,
+      };
+    });
+    return snapshot;
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -40,22 +62,8 @@ export function useSamplerState() {
       const request = ++latestSnapshotRequest.current;
       try {
         const snapshot = await nativeBridge.getSnapshot();
-        if (!validateSnapshot(snapshot)) throw new Error('The native snapshot did not match protocol v2.');
         if (!alive || request !== latestSnapshotRequest.current) return;
-        setState(previous => {
-          if (previous.snapshot && BigInt(snapshot.sequence) <= BigInt(previous.snapshot.sequence)) return previous;
-          return {
-            ...previous,
-            connection: 'connected',
-            snapshot,
-            waveform: snapshot.sample?.id === previous.waveform?.sampleId ? previous.waveform : null,
-            transport: snapshot.sampleTransport && snapshot.sample
-              ? { protocolVersion: 2, type: 'transport', requestId: 'snapshot', sampleId: snapshot.sample.id,
-                  status: snapshot.sampleTransport.status, positionSamples: snapshot.sampleTransport.positionSamples }
-              : null,
-            error: null,
-          };
-        });
+        acceptSnapshot(snapshot);
       } catch (error) {
         if (!alive || request !== latestSnapshotRequest.current) return;
         setState(previous => ({ ...previous, connection: 'error', error: error instanceof Error ? error.message : String(error) }));
@@ -65,18 +73,7 @@ export function useSamplerState() {
     const handleSnapshotEvent = (value: unknown) => {
       const snapshot = value as NativeSnapshot;
       if (!validateSnapshot(snapshot)) return;
-      setState(previous => {
-        if (previous.snapshot && BigInt(snapshot.sequence) <= BigInt(previous.snapshot.sequence)) return previous;
-        return {
-          ...previous, connection: 'connected', snapshot,
-          waveform: snapshot.sample?.id === previous.waveform?.sampleId ? previous.waveform : null,
-          transport: snapshot.sampleTransport && snapshot.sample
-            ? { protocolVersion: 2, type: 'transport', requestId: 'event', sampleId: snapshot.sample.id,
-                status: snapshot.sampleTransport.status, positionSamples: snapshot.sampleTransport.positionSamples }
-            : null,
-          error: null,
-        };
-      });
+      acceptSnapshot(snapshot);
     };
     const offSnapshot = nativeBridge.subscribe('samplerStateSnapshot', handleSnapshotEvent);
     refreshNow.current = () => { void refresh(); };
@@ -93,7 +90,7 @@ export function useSamplerState() {
       offSnapshot();
       refreshNow.current = () => undefined;
     };
-  }, []);
+  }, [acceptSnapshot]);
 
   const sampleId = state.snapshot?.sample?.id ?? null;
   useEffect(() => {
@@ -128,5 +125,7 @@ export function useSamplerState() {
     refreshNow.current();
   }, []);
 
-  return { ...state, retry };
+  const refreshSnapshot = useCallback(() => refreshNow.current(), []);
+
+  return { ...state, retry, acceptSnapshot, refreshSnapshot };
 }

@@ -115,6 +115,8 @@ if (BUILD_TESTING)
         tests/KeyAnalyzerTests.cpp
         tests/TransientAnalyzerTests.cpp
         tests/SliceEngineTests.cpp
+        tests/UiV2SliceParameterCommandTests.cpp
+        tests/UiV2TransportCommandTests.cpp
         tests/SlicePlaybackEngineTests.cpp
         tests/ADSREnvelopeTests.cpp
         tests/SampleEngineTests.cpp

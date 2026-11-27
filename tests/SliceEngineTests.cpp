@@ -1,5 +1,6 @@
 #include "SliceEngineTests.h"
 #include "../src/slice/SliceEngine.h"
+#include "../src/ui/SliceParameterBinding.h"
 #include <juce_core/juce_core.h>
 #include <limits>
 
@@ -12,6 +13,39 @@ public:
 
     void runTest() override
     {
+        beginTest("All slice parameter fields accept boundaries and interior values independently");
+        {
+            SliceEngine engine;
+            expect(engine.setSample(8001, 4096));
+            const auto id = engine.slices().front().id;
+            struct Case { SliceField field; float minimum, maximum, interior; };
+            const Case cases[] {
+                { SliceField::volume, 0.0f, 2.0f, 0.73f },
+                { SliceField::pan, -1.0f, 1.0f, 0.25f },
+                { SliceField::pitch, -24.0f, 24.0f, 7.5f },
+                { SliceField::attack, 0.0f, 10.0f, 0.037f },
+                { SliceField::decay, 0.0f, 10.0f, 0.42f },
+                { SliceField::sustain, 0.0f, 1.0f, 0.61f },
+                { SliceField::release, 0.0f, 10.0f, 1.25f }
+            };
+            for (const auto& item : cases)
+            {
+                auto before = engine.find(id)->parameters;
+                const float values[] { item.minimum, item.maximum, item.interior };
+                for (const auto value : values)
+                {
+                    expect(editSliceField(engine, 8001, id, item.field, value));
+                    auto after = engine.find(id)->parameters;
+                    expectWithinAbsoluteError(sliceField(after, item.field), value, 1.0e-6f);
+                    for (const auto other : cases)
+                        if (other.field != item.field)
+                            expectWithinAbsoluteError(sliceField(after, other.field),
+                                sliceField(before, other.field), 1.0e-6f);
+                    before = after;
+                }
+            }
+        }
+
         beginTest("Sample binding creates one bounded slice and changes identity safely");
         {
             SliceEngine engine;

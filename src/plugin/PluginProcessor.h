@@ -15,6 +15,8 @@
 class CreativeSamplerAudioProcessor final : public juce::AudioProcessor, private juce::Timer
 {
 public:
+    enum class ImportStatus { idle, loading, ready, failed };
+
     CreativeSamplerAudioProcessor();
     ~CreativeSamplerAudioProcessor() override;
 
@@ -60,6 +62,7 @@ public:
     AnalysisResult currentAnalysisResult() const { return analysisCoordinator.latestResult(); }
     AnalysisResultStamp currentAnalysisStamp() const { return analysisCoordinator.latestStamp(); }
     const juce::String& importStatus() const noexcept { return currentImportStatus; }
+    ImportStatus importStatusKind() const noexcept { return currentImportStatusKind; }
     float volumeValue() const noexcept;
 
 private:
@@ -82,7 +85,8 @@ private:
     AudioImportService importService;
     std::optional<SampleMetadata> sampleMetadata;
     std::shared_ptr<const WaveformData> waveform;
-    juce::String currentImportStatus { "Choose a WAV or AIFF sample to begin." };
+    juce::String currentImportStatus { "Choose WAV or AIFF (CAF on macOS) to begin." };
+    ImportStatus currentImportStatusKind = ImportStatus::idle;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CreativeSamplerAudioProcessor)
 };

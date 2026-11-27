@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <thread>
 
@@ -36,6 +37,51 @@ bool writeAudioFile(const juce::File& file, bool useAiff, int channels, int fram
         ? juce::AiffAudioFormat().createWriterFor(stream, options)
         : juce::WavAudioFormat().createWriterFor(stream, options);
     return writer != nullptr && writer->writeFromAudioSampleBuffer(audio, 0, frames);
+}
+
+bool writeCafLpcmFile(const juce::File& file, int frames, juce::uint32 formatId = 0x6c70636d)
+{
+    std::unique_ptr<juce::OutputStream> stream(file.createOutputStream());
+    if (stream == nullptr)
+        return false;
+
+    const auto writeTag = [&stream](const char* tag) { stream->write(tag, 4); };
+    const auto writeBigEndian = [&stream](juce::uint64 value, int bytes)
+    {
+        for (int shift = (bytes - 1) * 8; shift >= 0; shift -= 8)
+            stream->writeByte(static_cast<char>((value >> shift) & 0xff));
+    };
+    const auto writeLittleEndian = [&stream](juce::uint16 value)
+    {
+        stream->writeByte(static_cast<char>(value & 0xff));
+        stream->writeByte(static_cast<char>((value >> 8) & 0xff));
+    };
+
+    writeTag("caff");
+    writeBigEndian(1, 2); // CAF version
+    writeBigEndian(0, 2); // flags
+    writeTag("desc");
+    writeBigEndian(32, 8);
+    double rate = 48000.0;
+    juce::uint64 rateBits = 0;
+    std::memcpy(&rateBits, &rate, sizeof(rateBits));
+    writeBigEndian(rateBits, 8);
+    writeBigEndian(formatId, 4);
+    writeBigEndian(12, 4); // signed, packed, little-endian LPCM
+    writeBigEndian(2, 4);  // bytes per packet
+    writeBigEndian(1, 4);  // frames per packet
+    writeBigEndian(1, 4);  // channels
+    writeBigEndian(16, 4); // bits per channel
+    writeTag("data");
+    writeBigEndian(static_cast<juce::uint64>(4 + frames * 2), 8);
+    writeBigEndian(0, 4); // edit count
+    for (int frame = 0; frame < frames; ++frame)
+    {
+        const auto sample = static_cast<std::int16_t>(std::sin(frame * 0.071) * 16000.0);
+        writeLittleEndian(static_cast<juce::uint16>(sample));
+    }
+    stream->flush();
+    return stream->getPosition() == 68 + static_cast<juce::int64>(frames) * 2;
 }
 
 std::unique_ptr<SampleStorage> makeSample(int channels, int frames, double sampleRate,
@@ -165,6 +211,50 @@ public:
                 expect(result.waveform->levelCount() > 1);
             }
             file.deleteFile();
+        }
+
+        beginTest("CAF LPCM uses the shared importer when JUCE has a CAF reader");
+        {
+            const auto caf = makeTemporaryFile(".caf");
+            expect(writeCafLpcmFile(caf, 2048));
+            AudioImporter cafImporter;
+            auto result = cafImporter.load(caf);
+#if JUCE_MAC || JUCE_IOS
+            expect(result.succeeded(), result.error);
+            if (result.succeeded())
+            {
+                expectEquals(result.sample->metadata().channelCount, 1);
+                expectEquals(static_cast<int>(result.sample->metadata().sampleCount), 2048);
+                expectWithinAbsoluteError(result.sample->metadata().sampleRate, 48000.0, 0.01);
+                expect(result.waveform != nullptr);
+            }
+#else
+            expect(!result.succeeded());
+            expect(result.error.containsIgnoreCase("CAF files are not supported"), result.error);
+#endif
+            caf.deleteFile();
+        }
+
+        beginTest("Damaged and unsupported-codec CAF files report a useful error");
+        {
+            AudioImporter cafImporter;
+            const auto damagedCaf = makeTemporaryFile(".caf");
+            expect(damagedCaf.replaceWithData("caff\0\1", 6));
+            const auto damagedResult = cafImporter.load(damagedCaf);
+            expect(!damagedResult.succeeded());
+            expect(damagedResult.error.containsIgnoreCase("CAF"), damagedResult.error);
+            damagedCaf.deleteFile();
+
+            const auto unsupportedCodec = makeTemporaryFile(".caf");
+            expect(writeCafLpcmFile(unsupportedCodec, 128, 0x7a7a7a7a)); // "zzzz"
+            const auto codecResult = cafImporter.load(unsupportedCodec);
+            expect(!codecResult.succeeded());
+#if JUCE_MAC || JUCE_IOS
+            expect(codecResult.error.containsIgnoreCase("CAF"), codecResult.error);
+#else
+            expect(codecResult.error.containsIgnoreCase("not supported"), codecResult.error);
+#endif
+            unsupportedCodec.deleteFile();
         }
 
         beginTest("Invalid, empty, missing, and unsupported files return errors without throwing");

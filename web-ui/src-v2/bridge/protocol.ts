@@ -5,14 +5,37 @@ export type Revision = Id64;
 export type RequestId = string;
 export const protocolVersion = 2 as const;
 
+export type SliceParameterId = 'volume' | 'pan' | 'pitch' | 'attack' | 'decay' | 'sustain' | 'release';
+export type SetSliceParameterRequest = {
+  protocolVersion: typeof protocolVersion;
+  requestId: RequestId;
+  sampleId: SampleId;
+  revision: Revision;
+  sliceId: SliceId;
+  parameter: SliceParameterId;
+  value: number;
+};
+
 export type BridgeErrorCode = 'UNSUPPORTED_PROTOCOL' | 'INVALID_ARGUMENT' | 'NO_SAMPLE'
-  | 'STALE_SAMPLE' | 'NOT_FOUND' | 'INTERNAL';
+  | 'INVALID_PARAMETER' | 'INVALID_VALUE' | 'STALE_SAMPLE' | 'STALE_REVISION'
+  | 'SLICE_NOT_FOUND' | 'NOT_FOUND' | 'INTERNAL';
 
 export type BridgeError = {
   code: BridgeErrorCode;
   message: string;
   retryable: boolean;
 };
+
+export class BridgeCommandError extends Error {
+  readonly code: BridgeErrorCode;
+  readonly retryable: boolean;
+  constructor(code: BridgeErrorCode, message: string, retryable: boolean) {
+    super(`${code}: ${message}`);
+    this.name = 'BridgeCommandError';
+    this.code = code;
+    this.retryable = retryable;
+  }
+}
 
 export type CommandAck<T> =
   | { protocolVersion: typeof protocolVersion; type: 'ack'; requestId: RequestId; ok: true; result: T }
@@ -89,6 +112,14 @@ export type TransportDto = {
   sampleId: SampleId | null;
   status: 'stopped' | 'playing';
   positionSamples: number;
+};
+
+export type TransportAction = 'play' | 'stop';
+export type TransportCommandResult = {
+  protocolVersion: typeof protocolVersion;
+  type: 'transportCommand';
+  sampleId: SampleId;
+  action: TransportAction;
 };
 
 export type TransportUpdateDto = {

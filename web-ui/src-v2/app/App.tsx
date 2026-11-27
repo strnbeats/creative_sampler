@@ -1,128 +1,143 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Button } from '../components/Button';
-import { Label, Metadata, Value } from '../components/Typography';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { nativeBridge } from '../bridge/nativeBridge';
-import type { AnalysisDto, ViewSlice, ViewTransient } from '../bridge/protocol';
+import type { SliceId, TransportAction } from '../bridge/protocol';
 import { Inspector } from './Inspector';
+import { SourceHeader } from './SourceHeader';
 import { Transport } from './Transport';
-import { Waveform } from './Waveform';
+import { Waveform, type AmplitudeMode } from './Waveform';
 import { useSamplerState } from './useSamplerState';
+import { resolveSlice } from './sliceInteraction';
+import { SliceParameterQueue, type SliceParameterValues } from './sliceParameterQueue';
 import './app.css';
-
-const pitchNames = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
-function formatMidiNote(note: number) {
-  return `${pitchNames[note % 12]}${Math.floor(note / 12) - 1}`;
-}
-function analysisText(analysis: AnalysisDto | null) {
-  if (!analysis || analysis.status === 'notAnalyzed') return 'NOT ANALYZED';
-  if (analysis.status === 'running') return 'ANALYZING';
-  if (analysis.status === 'failed') return 'ANALYSIS FAILED';
-  if (analysis.status === 'cancelled') return 'ANALYSIS CANCELLED';
-  return 'ANALYSIS COMPLETE';
-}
 
 export function App() {
   const integration = useSamplerState();
   const snapshot = integration.snapshot;
   const loading = snapshot?.app.status === 'loading';
-  const sample = !loading ? snapshot?.sample ?? null : null;
-  const analysis = snapshot && sample && snapshot.analysis?.sampleId === sample.id ? snapshot.analysis : null;
-  const [selectedSliceId, setSelectedSliceId] = useState<string | null>(null);
+  const sample = loading ? null : snapshot?.sample ?? null;
+  const sampleId = sample?.id;
+  const sampleCount = sample?.sampleCount ?? 0;
+  const analysis = sample && snapshot?.analysis?.sampleId === sampleId ? snapshot?.analysis ?? null : null;
+  const [mode, setMode] = useState<AmplitudeMode>('linear');
   const [importError, setImportError] = useState<string | null>(null);
-
-  const slices = useMemo<ViewSlice[]>(() => snapshot && sample && snapshot.sample?.id === sample.id
-    ? snapshot.slices.map((slice, index) => ({
-      id: slice.id,
-      index: index + 1,
-      name: `Slice ${String(index + 1).padStart(2, '0')}`,
-      note: formatMidiNote(slice.midiNote),
-      midiNote: slice.midiNote,
-      startSample: slice.startSample,
-      endSample: slice.endSample,
-      volume: slice.parameters.volume,
-      pan: slice.parameters.pan,
-      pitch: slice.parameters.pitchSemitones,
-      attackSeconds: slice.parameters.envelope.attackSeconds,
-      decaySeconds: slice.parameters.envelope.decaySeconds,
-      sustain: slice.parameters.envelope.sustainLevel,
-      releaseSeconds: slice.parameters.envelope.releaseSeconds,
-    })) : [], [sample?.id, snapshot]);
-
+  const [transportBusy, setTransportBusy] = useState(false);
+  const [transportError, setTransportError] = useState<string | null>(null);
+  const activeSampleId = useRef(sampleId ?? null);
+  activeSampleId.current = sampleId ?? null;
   useEffect(() => {
-    setSelectedSliceId(slices[0]?.id ?? null);
-  }, [sample?.id]);
-  useEffect(() => {
-    if (selectedSliceId && !slices.some(slice => slice.id === selectedSliceId))
-      setSelectedSliceId(slices[0]?.id ?? null);
-  }, [selectedSliceId, slices]);
+    setTransportError(null);
+    setTransportBusy(false);
+  }, [sampleId]);
 
-  const selectedSlice = slices.find(slice => slice.id === selectedSliceId) ?? null;
-  const bpm = analysis?.status === 'completed' ? analysis.bpm?.value ?? null : null;
-  const key = analysis?.status === 'completed' && analysis.key?.tonic
-    ? `${analysis.key.tonic}${analysis.key.mode === 'minor' ? ' MIN' : ' MAJ'}` : null;
+  const slices = useMemo(() => {
+    if (!sampleId || !snapshot?.slices) return [];
+    return snapshot.slices.filter(slice => slice.endSample <= sampleCount)
+      .sort((left, right) => left.startSample - right.startSample);
+  }, [sampleId, sampleCount, snapshot?.slices]);
+
   const transientData = analysis?.status === 'completed' ? analysis.transients : null;
-  const transients: ViewTransient[] = (transientData?.positions ?? []).map((event, index) => ({
-    id: `${analysis?.generation}-${index}`,
-    samplePosition: event.samplePosition,
-    strength: event.strength,
-  }));
-  const transportPosition = integration.transport && sample && integration.transport.sampleId === sample.id
-    ? integration.transport.positionSamples : snapshot?.sampleTransport?.positionSamples ?? 0;
-  const transportPlaying = integration.transport && sample && integration.transport.sampleId === sample.id
-    ? integration.transport.status === 'playing' : snapshot?.sampleTransport?.status === 'playing';
-  const positionSeconds = sample && sample.sampleRate > 0 ? transportPosition / sample.sampleRate : 0;
+  const waveform = sample && integration.waveform?.sampleId === sampleId ? integration.waveform : null;
+  const transport = sample
+    ? integration.transport?.sampleId === sampleId ? integration.transport : snapshot?.sampleTransport ?? null
+    : null;
+  const bridgeUnavailable = integration.connection !== 'connected';
+  const importDisabled = bridgeUnavailable || loading;
+  const nativeImportError = snapshot?.app.status === 'error' ? snapshot.app.message : null;
+  const message = importError ?? nativeImportError ?? (bridgeUnavailable ? integration.error : null);
 
   const importSample = async () => {
     setImportError(null);
-    try { await nativeBridge.importSample(); }
-    catch (error) { setImportError(error instanceof Error ? error.message : String(error)); }
+    try {
+      await nativeBridge.importSample();
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const onImport = () => void importSample();
+  const onTransportAction = async (action: TransportAction) => {
+    if (!sample || transportBusy) return;
+    const requestedSampleId = sample.id;
+    setTransportBusy(true);
+    setTransportError(null);
+    try {
+      await nativeBridge.controlTransport(action, requestedSampleId);
+      integration.refreshSnapshot();
+    } catch (error) {
+      if (activeSampleId.current === requestedSampleId)
+        setTransportError(error instanceof Error ? error.message : String(error));
+      integration.refreshSnapshot();
+    } finally {
+      if (activeSampleId.current === requestedSampleId) setTransportBusy(false);
+    }
   };
 
-  const bridgeUnavailable = integration.connection !== 'connected';
-  const nativeImportError = snapshot?.app.status === 'error' ? snapshot.app.message : null;
-  const topMessage = importError ?? nativeImportError
-    ?? (bridgeUnavailable ? integration.error ?? 'Connecting to Creative Sampler…' : null);
+  return <main className={sample ? 'lithic' : 'lithic is-empty'}>
+    <SourceHeader sample={sample} analysis={analysis} loading={loading} onImport={onImport}
+      importDisabled={importDisabled} message={message} onRetry={bridgeUnavailable && message ? integration.retry : undefined} />
 
-  return <div className="cs-ui-v2">
-    {topMessage && <div className={`cs-connection-status${bridgeUnavailable || importError || nativeImportError ? ' is-error' : ''}`} role="status">
-      <span>{topMessage}</span>
-      {bridgeUnavailable && <Button onClick={integration.retry}>RETRY</Button>}
-    </div>}
-
-    <main className="cs-app-shell">
-      <header className="cs-sample-header">
-        <div className="cs-product-mark" aria-label="Creative Sampler"><span>◉</span><b>CREATIVE<br />SAMPLER</b></div>
-        <div className="cs-sample-identity">
-          <div className="cs-sample-source-row">
-            <Label>{loading ? 'IMPORTING SAMPLE' : sample ? 'ONE SOURCE, MANY VOICES' : 'SOURCE SAMPLE'}</Label>
-            <Button tone="accent" onClick={() => void importSample()} disabled={bridgeUnavailable || loading}>＋ IMPORT</Button>
-          </div>
-          <h1>{loading ? 'Loading sample…' : sample?.fileName ?? 'No sample loaded'}</h1>
-          <Metadata>{sample
-            ? `${sample.durationSeconds.toFixed(2)} SEC · ${(sample.sampleRate / 1000).toFixed(1)} kHz · ${sample.channelCount === 2 ? 'STEREO' : 'MONO'}${sample.bitDepth ? ` · ${sample.bitDepth}-BIT` : ''}${analysis ? ` · ${analysisText(analysis)}` : ''}`
-            : loading ? 'PREPARING AUDIO AND ANALYSIS' : snapshot?.app.message ?? 'IMPORT A WAV OR AIFF TO BEGIN'}</Metadata>
+    {sample ? <SampleWorkspace key={sample.id} sample={sample} waveform={waveform} slices={slices}
+      transients={transientData} transport={transport} mode={mode} setMode={setMode}
+      waveformError={!waveform && integration.connection === 'connected' ? integration.error : null}
+      snapshot={snapshot!} acceptSnapshot={integration.acceptSnapshot} refreshSnapshot={integration.refreshSnapshot} />
+      : <section className="plate empty-plate" aria-label="Source waveform">
+        <div className="plate-head"><span className="plate-label"><i className="copper-notch" />Source waveform</span></div>
+        <div className="empty-source">
+          <span className="empty-marker" aria-hidden="true" />
+          <strong>{loading ? 'Preparing sample' : 'No sample loaded'}</strong>
+          <p>{loading ? 'Reading audio and building the waveform…'
+            : bridgeUnavailable ? 'Waiting for the sampler engine.' : 'Import an audio file to begin.'}</p>
+          {!importDisabled && <button className="import-action" onClick={onImport}>Import sample</button>}
         </div>
-        <div className={`cs-sample-analysis${sample ? '' : ' is-empty'}`} aria-label="Analysis results">
-          <div><Label>TEMPO</Label><Value>{bpm !== null ? <>{bpm.toFixed(1)} <small>BPM</small></> : analysis?.status === 'running' ? '…' : '—'}</Value></div>
-          <div><Label>KEY</Label><Value>{key ?? (analysis?.status === 'running' ? '…' : '—')}</Value></div>
-          <div><Label>ATTACKS</Label><Value>{transientData ? transientData.totalEventCount : analysis?.status === 'running' ? '…' : '—'}</Value></div>
-        </div>
-      </header>
+      </section>}
 
-      <Waveform metadata={sample ? {
-        id: sample.id, name: sample.fileName, durationSeconds: sample.durationSeconds,
-        sampleRate: sample.sampleRate, sampleCount: sample.sampleCount, channelCount: sample.channelCount,
-      } : null}
-        peaks={integration.waveform && sample && integration.waveform.sampleId === sample.id ? integration.waveform.channels : []}
-        sampleCount={sample?.sampleCount ?? 0}
-        slices={slices} transients={transients} selectedSliceId={selectedSliceId}
-        playheadPositionSamples={positionSeconds * (sample?.sampleRate ?? 0)} playing={transportPlaying}
-        onSelectSlice={setSelectedSliceId} />
+    <Transport sample={sample} transport={transport} busy={transportBusy} error={transportError}
+      onAction={onTransportAction} />
+  </main>;
+}
 
-      <Inspector slice={selectedSlice} sliceCount={slices.length} sampleRate={sample?.sampleRate ?? 0} />
+// Both the waveform and the inspector use the same resolved ID. A new sample mounts a new workspace.
+type WorkspaceProps = Omit<React.ComponentProps<typeof Waveform>, 'selected' | 'select'> & {
+  snapshot: NonNullable<ReturnType<typeof useSamplerState>['snapshot']>;
+  acceptSnapshot: ReturnType<typeof useSamplerState>['acceptSnapshot'];
+  refreshSnapshot: ReturnType<typeof useSamplerState>['refreshSnapshot'];
+};
 
-      <Transport durationSeconds={sample?.durationSeconds ?? 0} positionSeconds={positionSeconds}
-        isPlaying={transportPlaying} disabled={!sample} />
-    </main>
-  </div>;
+function SampleWorkspace({ snapshot, acceptSnapshot, refreshSnapshot, ...props }: WorkspaceProps) {
+  const [selection, setSelection] = useState<SliceId | null>(null);
+  const [pendingValues, setPendingValues] = useState<SliceParameterValues>({});
+  const [pendingContext, setPendingContext] = useState<string | null>(null);
+  const [parameterError, setParameterError] = useState<string | null>(null);
+  const selected = resolveSlice(props.slices, selection);
+  const contextKey = `${snapshot.sample?.id ?? ''}:${selected?.id ?? ''}`;
+  const visiblePending = pendingContext === contextKey ? pendingValues : {};
+  if (selection !== null && selection !== selected?.id) setSelection(null);
+
+  const queue = useMemo(() => new SliceParameterQueue({
+    send: command => nativeBridge.setSliceParameter(command),
+    acceptSnapshot,
+    refresh: refreshSnapshot,
+    onPending: setPendingValues,
+    onError: setParameterError,
+  }), [acceptSnapshot, refreshSnapshot]);
+
+  useEffect(() => {
+    setParameterError(null);
+    queue.setContext(selected && snapshot.sliceRevision !== null
+      ? { sampleId: snapshot.sample!.id, sliceId: selected.id, revision: snapshot.sliceRevision }
+      : null);
+    return () => queue.dispose();
+  }, [queue, snapshot.sample?.id, selected?.id]);
+  useEffect(() => {
+    queue.syncSnapshot(snapshot);
+  }, [queue, snapshot]);
+
+  const select = useCallback((id: SliceId) => setSelection(id), []);
+  return <>
+    <Waveform {...props} selected={selected} select={select} />
+    <Inspector key={selected?.id} slice={selected} pendingValues={visiblePending}
+      onParameterChange={(parameter, value) => {
+        setPendingContext(contextKey);
+        queue.enqueue(parameter, value);
+      }} error={parameterError} />
+  </>;
 }

@@ -1,160 +1,162 @@
-import { useEffect, useRef, type CSSProperties } from 'react';
-import { Metadata, Label } from '../components/Typography';
-import { TransientMarker } from '../components/VisualizationPrimitives';
-import type { ViewSample, ViewSlice, ViewTransient } from '../bridge/protocol';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import type { NativeSnapshot, SampleMetadataDto, SliceDto, SliceId, WaveformDto } from '../bridge/protocol';
+import { CopperSignal, type AmplitudeMode } from './CopperSignal';
+import { SliceIndex, sliceNumber } from './SliceIndex';
+import { hitSlice, minDirectWidth, sliceTime } from './sliceInteraction';
+import { groupTransients, TransientLane, type Transients } from './TransientLane';
 
-type WaveformPeak = { min: number; max: number };
+export type { AmplitudeMode } from './CopperSignal';
 
-export type WaveformProps = {
-  metadata: ViewSample | null;
-  peaks: readonly (readonly WaveformPeak[])[];
-  sampleCount: number;
-  slices: readonly ViewSlice[];
-  transients: readonly ViewTransient[];
-  selectedSliceId: string | null;
-  playheadPositionSamples: number;
-  playing: boolean;
-  onSelectSlice: (sliceId: string) => void;
-};
+const pitchNames = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+const noteName = (note: number) => `${pitchNames[note % 12]}${Math.floor(note / 12) - 1}`;
+const pct = (value: number) => `${value * 100}%`;
 
-function formatTime(seconds: number) {
-  const minutes = Math.floor(seconds / 60);
-  const remaining = (seconds - minutes * 60).toFixed(2).padStart(5, '0');
-  return `${String(minutes).padStart(2, '0')}:${remaining}`;
-}
-
-export function Waveform({ metadata, peaks, sampleCount, slices, transients, selectedSliceId,
-  playheadPositionSamples, playing, onSelectSlice }: WaveformProps) {
+export function Waveform({ sample, waveform, slices, selected, select, transients, transport, mode, setMode, waveformError }: {
+  sample: SampleMetadataDto; waveform: WaveformDto | null; slices: readonly SliceDto[];
+  selected: SliceDto | null; select: (id: SliceId) => void;
+  transients: Transients | null; transport: NativeSnapshot['sampleTransport'];
+  mode: AmplitudeMode; setMode: (mode: AmplitudeMode) => void; waveformError: string | null;
+}) {
   const plotRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const selected = slices.find(slice => slice.id === selectedSliceId) ?? null;
-  const selectedDuration = metadata && selected
-    ? (selected.endSample - selected.startSample) / metadata.sampleRate : 0;
-  const playheadPercent = sampleCount > 0 ? Math.min(1, Math.max(0, playheadPositionSamples / sampleCount)) : 0;
+  const plateRef = useRef<HTMLElement>(null);
+  const pressed = useRef<{ id: SliceId; x: number; y: number } | null>(null);
+  const [width, setWidth] = useState(0);
+  const [hovered, setHovered] = useState<SliceId | null>(null);
+  const [focused, setFocused] = useState<SliceId | null>(null);
+  const totalFrames = Math.max(sample.sampleCount, 1);
+  const stereo = sample.channelCount === 2;
+  const intervals = useMemo(() => slices.map(slice => ({
+    start: slice.startSample / totalFrames,
+    end: slice.endSample / totalFrames,
+    pixels: (slice.endSample - slice.startSample) / totalFrames * width,
+  })), [slices, totalFrames, width]);
+  const showIndex = slices.length > 1 || intervals.some(interval => interval.pixels < minDirectWidth);
+  const indexFocus = showIndex && slices.some(slice => slice.id === focused) ? focused : null;
+  const linked = hovered ?? indexFocus;
+  const onIndexFocus = useCallback((id: SliceId | null) => {
+    setFocused(id);
+    if (id !== null) setHovered(null);
+  }, []);
+  const marks = useMemo(() => groupTransients(transients, sample, width), [transients, sample, width]);
+  const grouped = marks.some(mark => mark.count > 1);
+  const divisions = width < 640 ? 4 : 8;
+  const selectedIndex = selected ? slices.findIndex(slice => slice.id === selected.id) : -1;
+  const duration = selected && sample.sampleRate > 0 ? (selected.endSample - selected.startSample) / sample.sampleRate : 0;
 
-  useEffect(() => {
+  const position = transport && Number.isFinite(transport.positionSamples)
+    ? Math.min(1, Math.max(0, transport.positionSamples / totalFrames)) : null;
+  const hasPeaks = waveform?.channels.some(channel => channel.length > 0) === true;
+
+  useLayoutEffect(() => {
     const plot = plotRef.current;
-    const canvas = canvasRef.current;
-    if (!plot || !canvas || peaks.length === 0) return;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-
-    const draw = () => {
-      const { width, height } = plot.getBoundingClientRect();
-      if (width <= 0 || height <= 0) return;
-      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.round(width * pixelRatio);
-      canvas.height = Math.round(height * pixelRatio);
-      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      context.clearRect(0, 0, width, height);
-
-      const styles = getComputedStyle(plot);
-      const gradient = context.createLinearGradient(0, 0, 0, height);
-      gradient.addColorStop(0, styles.getPropertyValue('--cs-color-wave-high').trim());
-      gradient.addColorStop(1, styles.getPropertyValue('--cs-color-wave-low').trim());
-      const channelCount = peaks.length;
-      const laneHeight = height / channelCount;
-      const centerOffset = channelCount === 1 ? height / 2 : laneHeight / 2;
-      const amplitudeScale = channelCount === 1 ? height * 0.46 : laneHeight * 0.44;
-      context.lineCap = 'round';
-      context.strokeStyle = gradient;
-      peaks.forEach((channel, channelIndex) => {
-        if (channel.length === 0) return;
-        const stepWidth = width / channel.length;
-        context.lineWidth = Math.max(0.8, Math.min(1.35, stepWidth * 0.42));
-        const center = channelCount === 1 ? centerOffset : channelIndex * laneHeight + centerOffset;
-        channel.forEach((peak, index) => {
-          const x = (index + 0.5) * stepWidth;
-          const top = center - Math.max(0, peak.max) * amplitudeScale;
-          const bottom = center - Math.min(0, peak.min) * amplitudeScale;
-          const strength = Math.min(1, Math.max(Math.abs(peak.min), Math.abs(peak.max)));
-          context.globalAlpha = 0.48 + strength * 0.42;
-          context.beginPath();
-          context.moveTo(x, top);
-          context.lineTo(x, bottom);
-          context.stroke();
-        });
-      });
-      context.globalAlpha = 1;
-      context.strokeStyle = styles.getPropertyValue('--cs-color-border').trim();
-      context.lineWidth = 1;
-      for (let channel = 0; channel < channelCount; channel += 1) {
-        const center = channelCount === 1 ? centerOffset : channel * laneHeight + centerOffset;
-        context.beginPath();
-        context.moveTo(0, center + 0.5);
-        context.lineTo(width, center + 0.5);
-        context.stroke();
-      }
-    };
-
-    const observer = new ResizeObserver(draw);
+    if (!plot) return;
+    setWidth(plot.getBoundingClientRect().width);
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
     observer.observe(plot);
-    draw();
     return () => observer.disconnect();
-  }, [peaks]);
+  }, []);
 
-  return <section className={`cs-main-waveform${playing ? ' is-playing' : ''}${transients.length > 24 ? ' is-dense' : ''}`} aria-label="Sample waveform">
-    <div className="cs-waveform-heading">
-      <Label>01 <span>—</span> SOURCE</Label>
-      <Metadata>{selected
-        ? `SLICE ${String(selected.index).padStart(2, '0')} · ${selected.note} · ${selectedDuration.toFixed(2)} s`
-        : 'NO SLICE SELECTED'}</Metadata>
+  function eventHit(event: MouseEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return hitSlice(slices, totalFrames, event.clientX - rect.left, rect.width);
+  }
+
+  function onPlotPointerDown(event: PointerEvent<HTMLDivElement>) {
+    const hit = event.button === 0 ? eventHit(event) : null;
+    pressed.current = hit ? { id: hit.id, x: event.clientX, y: event.clientY } : null;
+  }
+
+  function onPlotClick(event: MouseEvent<HTMLDivElement>) {
+    const down = pressed.current;
+    pressed.current = null;
+    const hit = eventHit(event);
+    if (!down || !hit || down.id !== hit.id || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 5) return;
+    if (hit.action === 'select') select(hit.id);
+    else {
+      const index = slices.findIndex(slice => slice.id === hit.id);
+      plateRef.current?.querySelector<HTMLButtonElement>(`[data-slice-index="${index}"]`)?.focus();
+    }
+  }
+
+  return <section className="plate" aria-label="Sample waveform" ref={plateRef}>
+    <div className="plate-head">
+      <span className="plate-label"><i className="copper-notch" />Source waveform</span>
+      <div className="plate-tools">
+        <span className="plate-summary">{slices.length} {slices.length === 1 ? 'slice' : 'slices'}</span>
+        <div className="amplitude-switch" role="group" aria-label="Waveform amplitude display">
+          <button type="button" disabled={!hasPeaks} aria-pressed={mode === 'linear'}
+            onClick={() => setMode('linear')} title="Linear amplitude">Linear</button>
+          <button type="button" disabled={!hasPeaks} aria-pressed={mode === 'detail'}
+            onClick={() => setMode('detail')} title="Visual boost for quiet peaks (power 0.8)">Detail</button>
+        </div>
+      </div>
     </div>
 
-    {metadata === null ? <div className="cs-waveform-empty">
-      <div className="cs-waveform-empty__mark" aria-hidden="true">⌁</div>
-      <Label>NO SAMPLE IN THE SOURCE</Label>
-      <p>Choose a demonstration state above to explore the waveform layout.</p>
-    </div> : <>
-      <div className="cs-waveform-note-ruler" aria-hidden="true">
-        {slices.map(slice => {
-          const start = sampleCount > 0 ? slice.startSample / sampleCount * 100 : 0;
-          const width = sampleCount > 0 ? (slice.endSample - slice.startSample) / sampleCount * 100 : 0;
-          const showNote = slices.length <= 8 ? width >= 5.5 : false;
-          return showNote ? <span key={slice.id} style={{ left: `${start}%`, width: `${width}%` }}>{slice.note}</span> : null;
-        })}
+    <div className="signal">
+      <div className={`channel-legend${stereo ? ' is-stereo' : ''}`} aria-hidden="true">
+        {stereo ? <><span>L</span><span>R</span></> : <span>M</span>}
       </div>
-
-      <div className="cs-waveform-plot" ref={plotRef}>
-        <canvas ref={canvasRef} className="cs-waveform-canvas" role="img"
-          aria-label={`${metadata.name}, waveform amplitude`} />
-        {slices.map(slice => {
-          const left = sampleCount > 0 ? slice.startSample / sampleCount * 100 : 0;
-          const width = sampleCount > 0 ? (slice.endSample - slice.startSample) / sampleCount * 100 : 0;
-          const showNumber = width >= (slices.length > 8 ? 3.8 : 5.5);
-          const selectedState = slice.id === selectedSliceId;
-          return <button key={slice.id} type="button"
-            className={`cs-slice-region${selectedState ? ' is-selected' : ''}`}
-            style={{ left: `${left}%`, width: `${width}%` } as CSSProperties}
-            onClick={() => onSelectSlice(slice.id)} aria-pressed={selectedState}
-            aria-label={`Выбрать слайс ${slice.index}, ${slice.name}, ${slice.note}`}>
-            {showNumber && <span>{String(slice.index).padStart(2, '0')}</span>}
-          </button>;
-        })}
-        {transients.map(event => <TransientMarker key={event.id}
-          position={`${sampleCount > 0 ? event.samplePosition / sampleCount * 100 : 0}%`}
-          strength={event.strength}
-          label={`Транзиент, сила ${Math.round(event.strength * 100)}%`} />)}
-        <span className="cs-playhead" style={{ left: `${playheadPercent * 100}%` } as CSSProperties} aria-hidden="true">
-          <i />
+      <div className="plot" ref={plotRef} aria-label={stereo ? 'Left and right channel peaks' : 'Sample peak envelope'}>
+        <CopperSignal waveform={waveform} stereo={stereo} mode={mode} divisions={divisions}
+          start={selected ? selected.startSample / totalFrames : 0}
+          end={selected ? selected.endSample / totalFrames : 0} />
+        <div className="cut-regions" aria-label="Slice ranges" onPointerDown={onPlotPointerDown}
+          onPointerCancel={() => { pressed.current = null; }} onClick={onPlotClick}>
+          {slices.map((slice, index) => {
+            const interval = intervals[index];
+            const active = selected?.id === slice.id;
+            const className = `cut-region${active ? ' is-selected' : ''}${linked === slice.id ? ' is-linked' : ''}`;
+            const label = `Slice ${sliceNumber(index)} · ${noteName(slice.midiNote)}`;
+            const props = {
+              style: { left: pct(interval.start), width: pct(interval.end - interval.start) },
+              onPointerEnter: () => setHovered(slice.id), onPointerLeave: () => setHovered(null),
+            };
+            if (interval.pixels < minDirectWidth) return <div key={slice.id} {...props} className={`${className} is-narrow`}
+              title={`${label} · Use slice index`} />;
+            return <button key={slice.id} {...props} className={className}
+              type="button" tabIndex={showIndex ? -1 : 0} aria-label={label} aria-pressed={active} title={label}
+              onClick={event => { if (event.detail === 0) { event.stopPropagation(); select(slice.id); } }}>
+              <span>{sliceNumber(index)}{interval.pixels >= 74 && <small>{noteName(slice.midiNote)}</small>}</span>
+            </button>;
+          })}
+        </div>
+        {!hasPeaks && <span className="wave-status" role="status">{waveformError ?? 'Waiting for waveform…'}</span>}
+        <TransientLane marks={marks} duration={sample.durationSeconds} />
+        {position !== null && <div className={`playhead${transport?.status === 'playing' ? ' is-playing' : ''}`}
+          style={{ left: pct(position) }} aria-hidden="true" />}
+      </div>
+    </div>
+    <div className="scale" aria-label="Time in seconds">
+      {Array.from({ length: divisions + 1 }, (_, index) => <span key={index} style={{ left: pct(index / divisions) }}>
+        {(index / divisions * sample.durationSeconds).toFixed(2)}{index === divisions ? ' s' : ''}
+      </span>)}
+    </div>
+    {showIndex && <SliceIndex slices={slices} selectedId={selected?.id} select={select}
+      linked={linked} focused={indexFocus} onHover={setHovered} onFocusChange={onIndexFocus} />}
+    <div className="plate-selection" aria-label="Selected range">
+      {selected ? <div className="selection-context">
+        <div className="selection-arrows" role="group" aria-label="Step through slices">
+          <button type="button" aria-label="Previous slice" disabled={selectedIndex <= 0}
+            onClick={() => select(slices[selectedIndex - 1].id)}><ChevronLeft size={14} /></button>
+          <button type="button" aria-label="Next slice" disabled={selectedIndex >= slices.length - 1}
+            onClick={() => select(slices[selectedIndex + 1].id)}><ChevronRight size={14} /></button>
+        </div>
+        <span className="selection-name" aria-live="polite"><b>Slice {sliceNumber(selectedIndex)}</b><i />{noteName(selected.midiNote)}</span>
+        <span className="selection-time" title={`Frames ${selected.startSample}–${selected.endSample} (exclusive end)`}>
+          {sliceTime(selected.startSample, sample.sampleRate)}–{sliceTime(selected.endSample, sample.sampleRate)} s
+          {duration < .1 && <span className="micro-length"> · {(duration * 1000).toFixed(duration < .001 ? 2 : 0)} ms</span>}
         </span>
-      </div>
-
-      <div className="cs-time-ruler" aria-label="Временная шкала">
-        <span>{formatTime(0)}</span>
-        <i /><i /><i /><i /><i />
-        <span>{formatTime(metadata.durationSeconds)}</span>
-      </div>
-
-      <div className={`cs-slice-sequence${slices.length > 8 ? ' is-dense' : ''}`} aria-label="Последовательность слайсов">
-        {slices.map(slice => <button key={slice.id} type="button"
-          className={`cs-sequence-item${slice.id === selectedSliceId ? ' is-selected' : ''}`}
-          onClick={() => onSelectSlice(slice.id)} aria-pressed={slice.id === selectedSliceId}
-          aria-label={`Выбрать слайс ${slice.index}, ${slice.name}, ${slice.note}`}>
-          <span>{String(slice.index).padStart(2, '0')}</span>
-          {slices.length <= 8 && <b>{slice.note}</b>}
-        </button>)}
-      </div>
-    </>}
+      </div> : <span>No slice selected</span>}
+      {transients && <span className="transient-readout"
+        title={grouped ? 'Double marks show groups. Hover a mark for its count and time.' : undefined}>
+        {grouped && <i className="cluster-key" aria-hidden="true" />}
+        {transients.totalEventCount} {transients.totalEventCount === 1 ? 'transient' : 'transients'}
+        {(grouped || transients.truncated) && ` / ${marks.length} ${marks.length === 1 ? 'mark' : 'marks'}`}
+      </span>}
+    </div>
+    {showIndex && <p className="slice-index-help" id="slice-index-help">
+      {indexFocus ? 'Arrow keys move focus · Enter confirms' : 'Use the index for short slices and cuts'}
+    </p>}
   </section>;
 }

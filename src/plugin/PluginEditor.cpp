@@ -1,4 +1,6 @@
 #include "PluginEditor.h"
+#include "../ui/UiV2SliceParameterCommand.h"
+#include "../ui/UiV2TransportCommand.h"
 #include <algorithm>
 #include <BinaryData.h>
 #include <BinaryDataV2.h>
@@ -356,6 +358,30 @@ CreativeSamplerAudioProcessorEditor::CreativeSamplerAudioProcessorEditor(
             }
             done(webViewV2Transport(args[0]));
         })
+        .withNativeFunction("controlUiV2Transport", [this](const juce::Array<juce::var>& args,
+                                                               juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            if (args.isEmpty())
+            {
+                done(uiV2TransportError({}, "INVALID_ARGUMENT", "Missing transport command."));
+                return;
+            }
+            done(handleUiV2TransportCommand(args[0], audioProcessor.sliceEngineForUi().sampleId(),
+                audioProcessor.hasSample(),
+                [this] { audioProcessor.playSample(); },
+                [this] { audioProcessor.stopSample(); }));
+        })
+        .withNativeFunction("setUiV2SliceParameter", [this](const juce::Array<juce::var>& args,
+                                                                juce::WebBrowserComponent::NativeFunctionCompletion done)
+        {
+            if (args.isEmpty())
+            {
+                done(uiV2SliceParameterError({}, "INVALID_ARGUMENT", "Missing parameter request."));
+                return;
+            }
+            done(handleUiV2SliceParameterCommand(args[0], audioProcessor.sliceEngineForUi(),
+                [this](const juce::String& requestId) { return webViewV2Snapshot(requestId); }));
+        })
         .withNativeFunction("importSampleV2", [this](const juce::Array<juce::var>& args,
                                                         juce::WebBrowserComponent::NativeFunctionCompletion done)
         {
@@ -480,7 +506,11 @@ void CreativeSamplerAudioProcessorEditor::timerCallback()
     else
     {
         sampleNameLabel.setText("No sample loaded", juce::dontSendNotification);
+#if JUCE_MAC || JUCE_IOS
+        metadataLabel.setText("WAV, AIFF and CAF  /  mono or stereo", juce::dontSendNotification);
+#else
         metadataLabel.setText("WAV and AIFF  /  mono or stereo", juce::dontSendNotification);
+#endif
     }
     repaint();
     publishUiV2Events();
@@ -621,10 +651,9 @@ juce::var CreativeSamplerAudioProcessorEditor::webViewV2Snapshot(const juce::Str
     snapshot->setProperty("sequence", uint64String(webUiV2Sequence++));
 
     const auto importStatus = audioProcessor.importStatus();
-    const auto isLoading = importStatus.startsWith("Loading ");
-    const auto isError = importStatus.containsIgnoreCase("failed")
-        || importStatus.containsIgnoreCase("could not")
-        || importStatus.containsIgnoreCase("not enough memory");
+    const auto statusKind = audioProcessor.importStatusKind();
+    const auto isLoading = statusKind == CreativeSamplerAudioProcessor::ImportStatus::loading;
+    const auto isError = statusKind == CreativeSamplerAudioProcessor::ImportStatus::failed;
     auto app = makeObject();
     app->setProperty("status", isLoading ? "loading" : isError ? "error" : "ready");
     app->setProperty("message", isLoading || isError || !audioProcessor.hasSample()
