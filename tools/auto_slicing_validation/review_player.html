@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto Slicing — Listening Review</title>
+  <style>
+    :root{color-scheme:light;--paper:#f3eee5;--panel:#fffdf9;--ink:#292820;--muted:#77746a;--line:#ded6c9;--copper:#a5683e;--copper-dark:#75472c;--green:#557b64;--red:#bd6452;--shadow:0 10px 28px #46362212;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--paper);color:var(--ink)}button,input,select,textarea{font:inherit}button{color:inherit;cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
+    .shell{min-height:100vh;display:grid;grid-template-columns:270px minmax(0,1fr)}.rail{padding:22px 16px;border-right:1px solid var(--line);background:#eee8de;min-height:100vh}.brand{font-size:11px;letter-spacing:.16em;color:var(--copper-dark);font-weight:750}.rail h1{font-size:18px;line-height:1.2;margin:8px 0 18px}.progress{background:#e1d8cb;border-radius:20px;height:6px;overflow:hidden;margin:8px 0}.progress span{display:block;height:100%;background:var(--copper);width:0;transition:width .2s}.progress-caption,.micro{font-size:11px;color:var(--muted)}.filters{display:grid;gap:8px;margin:19px 0 13px}.filters label{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}select{width:100%;border:1px solid var(--line);border-radius:7px;background:var(--panel);padding:7px 9px;color:var(--ink)}.queue{display:grid;gap:5px;max-height:calc(100vh - 220px);overflow:auto}.queue-item{width:100%;text-align:left;padding:9px 10px;border:1px solid transparent;border-radius:8px;background:transparent;display:grid;grid-template-columns:1fr auto;gap:2px 8px}.queue-item:hover{background:#f8f4ee}.queue-item.active{background:var(--panel);border-color:#c7ab91;box-shadow:0 3px 10px #4636220b}.queue-item strong{font-size:12px;font-weight:650}.queue-item small{color:var(--muted);font-size:10px}.tag{align-self:start;padding:2px 6px;border-radius:12px;background:#e4ded3;font-size:9px;color:#6e665a}.tag.reviewed{background:#dce8de;color:#42664e}.tag.progress{background:#f2e5ce;color:#8a622d}
+    main{min-width:0;padding:24px clamp(18px,3vw,42px) 50px;max-width:1480px}.topline{display:flex;align-items:center;justify-content:space-between;gap:14px}.eyebrow{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted)}.sample-nav{display:flex;gap:6px}.quiet{background:transparent;border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:12px}.quiet:hover{border-color:var(--copper);color:var(--copper-dark)}h2{font-size:clamp(21px,2.6vw,31px);letter-spacing:-.025em;line-height:1.1;margin:8px 0 11px}.metadata{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 20px}.pill{padding:4px 9px;border:1px solid var(--line);border-radius:20px;background:#fbf8f2;color:#625e55;font-size:11px}.pill.copper{border-color:#d4b69e;color:var(--copper-dark);background:#f8eee4}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin-bottom:16px}.wave-card{padding:14px 16px 12px}.section-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.section-row h3,.card h3{font-size:13px;margin:0;font-weight:700}.segmented{display:inline-flex;padding:3px;border:1px solid var(--line);border-radius:9px;background:#f3eee6;gap:2px}.segmented button{border:0;border-radius:6px;background:transparent;padding:6px 11px;color:var(--muted);font-size:11px}.segmented button.active{background:#fffdf9;color:var(--copper-dark);box-shadow:0 1px 4px #3021131f}.wave-wrap{position:relative}.wave{display:block;width:100%;height:250px;background:#f8f4ed;border:1px solid #e8e1d7;border-radius:8px;cursor:crosshair}.wave-hint{font-size:10px;color:var(--muted);margin:7px 2px 0;display:flex;justify-content:space-between;gap:10px}.playhead{color:var(--copper-dark)}.playhead-line{display:none;position:absolute;top:1px;bottom:1px;width:2px;background:#557b64;pointer-events:none;z-index:2}.empty-wave{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);pointer-events:none}
+    .below{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(310px,.8fr);gap:16px}.controls,.plan-card,.review-card{padding:15px 16px}.transport{display:flex;flex-wrap:wrap;gap:7px;margin:11px 0}.action{border:1px solid #c8b9a7;background:#fffdf9;border-radius:7px;padding:7px 10px;font-size:11px}.action:hover{border-color:var(--copper);color:var(--copper-dark)}.action.primary{background:var(--copper);border-color:var(--copper);color:white}.action:disabled{opacity:.42;cursor:default}.now-playing{margin-left:auto;align-self:center;color:var(--muted);font-variant-numeric:tabular-nums;font-size:11px}.slice-detail{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding-top:10px;border-top:1px solid #ece6dc}.slice-detail strong{font-size:12px}.slice-detail span{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.plan-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:12px 0}.metric{padding:8px;border-radius:8px;background:#f6f1e9}.metric b{display:block;font-size:15px;font-variant-numeric:tabular-nums}.metric span{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.diagnostics{font-size:10px;color:#716a5e;line-height:1.7}.match-banner{font-size:11px;color:var(--green);background:#edf3ed;border-radius:7px;padding:7px 9px;margin:9px 0}.error-banner{font-size:12px;color:#7d382a;background:#f8e8e3;padding:11px 12px;border-radius:8px;margin-bottom:12px;white-space:pre-wrap}
+    .review-card{margin-top:4px}.review-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.review-head p{margin:4px 0 12px;color:var(--muted);font-size:11px}.review-grid{display:grid;grid-template-columns:repeat(5,minmax(85px,1fr));gap:9px}.field label{display:block;font-size:10px;color:#69645a;margin:0 0 4px}.field select,.field textarea{font-size:12px}.comments{margin-top:10px}.field textarea{width:100%;min-height:62px;resize:vertical;border:1px solid var(--line);border-radius:7px;padding:8px;background:#fffefa}.review-footer{display:flex;align-items:end;justify-content:space-between;gap:14px;margin-top:12px}.preference{max-width:260px}.save-state{font-size:11px;color:var(--muted);min-height:18px}.save-state.ok{color:var(--green)}.save-state.bad{color:var(--red)}.footer-note{color:#8b857b;font-size:10px;margin-top:16px}
+    @media(max-width:980px){.shell{grid-template-columns:225px minmax(0,1fr)}.below{grid-template-columns:1fr}.wave{height:220px}.review-grid{grid-template-columns:repeat(3,minmax(90px,1fr))}}
+    @media(max-width:680px){.shell{display:block}.rail{min-height:auto;border-right:0;border-bottom:1px solid var(--line);padding:14px}.rail h1{display:inline-block;margin:4px 8px 4px 0}.brand{display:block}.queue{display:flex;max-height:none;overflow-x:auto;padding-bottom:4px}.queue-item{min-width:170px}.filters{grid-template-columns:1fr 1fr;margin:10px 0}.progress-caption{display:inline}.rail .progress{max-width:320px}.topline{align-items:flex-start}.wave{height:190px}.review-grid{grid-template-columns:repeat(2,minmax(100px,1fr))}.review-footer{align-items:stretch;flex-direction:column}.preference{max-width:none}.section-row{align-items:flex-start;flex-direction:column}.sample-nav{margin-left:auto}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <div class="brand">CREATIVE SAMPLER · LAB</div>
+    <h1>Listening Review</h1>
+    <div class="progress"><span id="progressBar"></span></div>
+    <div class="progress-caption" id="progressText">Loading queue…</div>
+    <div class="filters">
+      <div><label for="categoryFilter">Category</label><select id="categoryFilter"><option value="all">All categories</option><option value="drums">Drums</option><option value="melodic">Melodic</option><option value="vocals">Vocals / voice-like</option></select></div>
+      <div><label for="statusFilter">Evaluation</label><select id="statusFilter"><option value="all">All statuses</option><option value="unreviewed">Unreviewed</option><option value="in_progress">In progress</option><option value="reviewed">Reviewed</option></select></div>
+    </div>
+    <nav class="queue" id="queue" aria-label="Accepted samples"></nav>
+  </aside>
+  <main>
+    <div class="topline"><div class="eyebrow">Auto Slicing · Human Evaluation</div><div class="sample-nav"><button class="quiet" id="prevSample" aria-label="Previous sample">← Previous</button><button class="quiet" id="nextSample">Next →</button></div></div>
+    <div id="loadError" class="error-banner" hidden></div>
+    <h2 id="sampleName">Loading accepted primary candidates</h2>
+    <div class="metadata" id="metadata"></div>
+    <section class="card wave-card">
+      <div class="section-row"><h3>Source waveform · choose a slice by clicking its region</h3><div class="segmented" role="group" aria-label="Waveform view"><button data-mode="original">Original</button><button class="active" data-mode="transient">Transient</button><button data-mode="hybrid">Hybrid</button></div></div>
+      <div class="wave-wrap"><canvas class="wave" id="waveform" aria-label="Original waveform with slice boundaries"></canvas><div class="playhead-line" id="playheadLine"></div><div class="empty-wave" id="waveMessage">Select a candidate to load its PCM waveform.</div></div>
+      <div class="wave-hint"><span id="waveLegend">Gold marks are slice boundaries; click within a section to select it.</span><span class="playhead" id="position">00:00.000 / 00:00.000</span></div>
+    </section>
+    <div class="below">
+      <section class="card controls">
+        <div class="section-row"><h3>Transport</h3><span class="micro" id="activeSliceLabel">No slice selected</span></div>
+        <div class="transport">
+          <button class="action primary" id="playOriginal">Play Original</button>
+          <button class="action" id="playSlice">Play Selected Slice</button>
+          <button class="action" id="playSequence">Play All Slices</button>
+          <button class="action" id="pausePlayback" disabled>Pause</button>
+          <button class="action" id="stopPlayback" disabled>Stop</button>
+        </div>
+        <div class="transport">
+          <button class="action" id="previousSlice">← Previous Slice</button>
+          <button class="action" id="nextSlice">Next Slice →</button>
+          <label class="micro"><input type="checkbox" id="repeatSlice"> Repeat selected slice</label>
+          <span class="now-playing" id="transportState">Stopped</span>
+        </div>
+        <div class="slice-detail"><strong id="sliceTitle">Select a region on the waveform</strong><span id="sliceTiming">—</span></div>
+      </section>
+      <section class="card plan-card">
+        <div class="section-row"><h3 id="planTitle">Transient plan</h3><span class="pill" id="planStatus">—</span></div>
+        <div class="plan-metrics"><div class="metric"><b id="sliceCount">—</b><span>Slices</span></div><div class="metric"><b id="matchedCount">—</b><span>Matching boundaries</span></div><div class="metric"><b id="differentCount">—</b><span>Different boundaries</span></div></div>
+        <div id="matchBanner" class="match-banner" hidden></div>
+        <div class="diagnostics" id="diagnostics">Choose a valid plan to inspect its diagnostics.</div>
+      </section>
+    </div>
+    <section class="card review-card">
+      <div class="review-head"><div><h3>Listening evaluation</h3><p>Rate the strategy outputs independently. Blank fields mean not evaluated. The source candidate’s existing accepted status is kept separately.</p></div><div class="segmented"><button class="active" data-review="transient">Transient</button><button data-review="hybrid">Hybrid</button></div></div>
+      <div class="review-grid" id="ratingFields"></div>
+      <div class="field comments"><label for="reviewComments">Comments for <span id="commentStrategy">Transient</span></label><textarea id="reviewComments" maxlength="5000" placeholder="Describe boundary placement, attacks, tails, musical use…"></textarea></div>
+      <div class="review-footer"><div class="field preference"><label for="preference">Which result do you prefer?</label><select id="preference"><option value="">Not evaluated</option><option value="Transient">Transient</option><option value="Hybrid">Hybrid</option><option value="Equal">Equal</option><option value="Neither">Neither</option></select></div><div><div class="save-state" id="saveState" aria-live="polite"></div><button class="action primary" id="saveReview">Save evaluation</button></div></div>
+      <div class="footer-note" id="legacyNote"></div>
+    </section>
+  </main>
+</div>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const ratingNames = [
+    ['boundary_quality', 'Boundary quality'],
+    ['attack_preservation', 'Attack preservation'],
+    ['tail_preservation', 'Tail preservation'],
+    ['musical_usability', 'Musical usability'],
+    ['overall_quality', 'Overall quality']
+  ];
+  let samples = [];
+  let selectedId = '';
+  let viewMode = 'transient';
+  let reviewStrategy = 'transient';
+  let selectedSlice = 0;
+  let audioContext = null;
+  let audioBuffer = null;
+  let playback = null;
+  let pausedPlayback = null;
+  let currentFrame = 0;
+  let animation = 0;
+  const draftById = new Map();
+  let saveTimer = null;
+
+  function currentSample() { return samples.find(sample => sample.id === selectedId) || null; }
+  function currentPlan(strategy = reviewStrategy) { return currentSample()?.plans?.[strategy] || null; }
+  function frameTime(frame) { const rate = currentSample()?.sampleRate || 1; return frame / rate; }
+  function clock(seconds) {
+    const ms = Math.floor((seconds % 1) * 1000).toString().padStart(3, '0');
+    const whole = Math.floor(seconds);
+    return `${String(Math.floor(whole / 60)).padStart(2, '0')}:${String(whole % 60).padStart(2, '0')}.${ms}`;
+  }
+  function escapeText(value) { return String(value ?? ''); }
+  function setSave(message, kind = '') { $('saveState').textContent = message; $('saveState').className = `save-state ${kind}`; }
+  function evalDraft(sample) {
+    if (!draftById.has(sample.id)) {
+      const review = sample.review || {};
+      draftById.set(sample.id, {
+        strategies: {
+          transient: { ...(review.strategies?.transient || {}) },
+          hybrid: { ...(review.strategies?.hybrid || {}) }
+        },
+        preferredStrategy: review.preferredStrategy || ''
+      });
+    }
+    return draftById.get(sample.id);
+  }
+  function renderQueue() {
+    const category = $('categoryFilter').value;
+    const status = $('statusFilter').value;
+    const filtered = samples.filter(sample => (category === 'all' || sample.category === category) && (status === 'all' || sample.review?.status === status));
+    $('queue').replaceChildren();
+    for (const sample of filtered) {
+      const button = document.createElement('button');
+      button.className = `queue-item${sample.id === selectedId ? ' active' : ''}`;
+      button.type = 'button';
+      const name = document.createElement('strong'); name.textContent = sample.filename || sample.id;
+      const tag = document.createElement('span'); tag.className = `tag ${sample.review?.status === 'reviewed' ? 'reviewed' : sample.review?.status === 'in_progress' ? 'progress' : ''}`; tag.textContent = (sample.review?.status || 'unreviewed').replace('_', ' ');
+      const meta = document.createElement('small'); meta.textContent = `${sample.category} · ${sample.durationSeconds ? `${sample.durationSeconds.toFixed(2)} s` : 'PCM unavailable'}`;
+      button.append(name, tag, meta); button.addEventListener('click', () => selectSample(sample.id)); $('queue').append(button);
+    }
+    const reviewed = samples.filter(sample => sample.review?.status === 'reviewed').length;
+    $('progressText').textContent = `${reviewed} of ${samples.length} evaluations complete`;
+    $('progressBar').style.width = samples.length ? `${reviewed / samples.length * 100}%` : '0%';
+  }
+  function renderMetadata(sample) {
+    $('sampleName').textContent = sample.filename || sample.id;
+    $('metadata').replaceChildren();
+    const items = [sample.category, sample.durationSeconds === undefined ? 'duration unavailable' : `${sample.durationSeconds.toFixed(3)} s`, sample.sampleRate ? `${sample.sampleRate.toLocaleString()} Hz` : 'sample rate unavailable', sample.channels ? `${sample.channels} channel${sample.channels === 1 ? '' : 's'}` : 'channels unavailable', sample.frames ? `${sample.frames.toLocaleString()} frames` : 'frames unavailable', sample.pcmFilename ? `local PCM: ${sample.pcmFilename}` : '', `source status: ${sample.review?.sourceStatus || 'accepted'}`].filter(Boolean);
+    for (const value of items) { const pill = document.createElement('span'); pill.className = 'pill'; pill.textContent = value; $('metadata').append(pill); }
+  }
+  function renderRatingForm() {
+    const sample = currentSample(); if (!sample) return;
+    const draft = evalDraft(sample); const values = draft.strategies[reviewStrategy] || {};
+    $('commentStrategy').textContent = reviewStrategy === 'transient' ? 'Transient' : 'Hybrid';
+    $('ratingFields').replaceChildren();
+    for (const [key, label] of ratingNames) {
+      const field = document.createElement('div'); field.className = 'field';
+      const lab = document.createElement('label'); lab.htmlFor = `rate-${key}`; lab.textContent = label;
+      const select = document.createElement('select'); select.id = `rate-${key}`; select.dataset.rating = key;
+      const blank = document.createElement('option'); blank.value = ''; blank.textContent = 'Not rated'; select.append(blank);
+      for (let value = 1; value <= 5; value++) { const option = document.createElement('option'); option.value = String(value); option.textContent = `${value} / 5`; select.append(option); }
+      select.value = values[key] === undefined ? '' : String(values[key]);
+      select.addEventListener('change', () => { evalDraft(sample).strategies[reviewStrategy][key] = select.value; setSave('Unsaved evaluation changes'); });
+      field.append(lab, select); $('ratingFields').append(field);
+    }
+    const verdictField = document.createElement('div'); verdictField.className = 'field';
+    const verdictLabel = document.createElement('label'); verdictLabel.htmlFor = 'verdict'; verdictLabel.textContent = 'Verdict';
+    const verdict = document.createElement('select'); verdict.id = 'verdict';
+    for (const [value, text] of [['', 'Not evaluated'], ['Accept', 'Accept'], ['Needs Improvement', 'Needs Improvement'], ['Reject', 'Reject']]) { const option = document.createElement('option'); option.value = value; option.textContent = text; verdict.append(option); }
+    verdict.value = values.verdict || ''; verdict.addEventListener('change', () => { evalDraft(sample).strategies[reviewStrategy].verdict = verdict.value; setSave('Unsaved evaluation changes'); });
+    verdictField.append(verdictLabel, verdict); $('ratingFields').append(verdictField);
+    $('reviewComments').value = values.comments || '';
+    $('preference').value = draft.preferredStrategy || '';
+    $('legacyNote').textContent = sample.review?.legacyComments ? `Previous shared note retained: ${sample.review.legacyComments}` : '';
+  }
+  function visibleSlices() { return currentPlan(reviewStrategy)?.slices || []; }
+  function drawWaveform() {
+    const canvas = $('waveform'); const rect = canvas.getBoundingClientRect();
+    const ratio = Math.max(1, window.devicePixelRatio || 1); const width = Math.max(1, Math.floor(rect.width * ratio)); const height = Math.max(1, Math.floor(rect.height * ratio));
+    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+    const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, width, height); ctx.fillStyle = '#f8f4ed'; ctx.fillRect(0, 0, width, height);
+    if (!audioBuffer) { $('waveMessage').hidden = false; return; }
+    $('waveMessage').hidden = true;
+    const sample = currentSample(); const mid = height * .52; const amp = height * .39; const data = Array.from({length: audioBuffer.numberOfChannels}, (_, i) => audioBuffer.getChannelData(i));
+    ctx.strokeStyle = '#c4b9a9'; ctx.lineWidth = Math.max(1, ratio * .6); ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(width, mid); ctx.stroke();
+    const plan = viewMode === 'original' ? null : currentPlan(viewMode);
+    if (plan) {
+      for (const slice of plan.slices) {
+        const x0 = slice.startFrame / sample.frames * width; const x1 = slice.endFrame / sample.frames * width;
+        if ((slice.number - 1) % 2 === 0) { ctx.fillStyle = '#d5b28b19'; ctx.fillRect(x0, 0, Math.max(1, x1-x0), height); }
+        if (slice.number - 1 === selectedSlice) { ctx.fillStyle = '#bd87512d'; ctx.fillRect(x0, 0, Math.max(1, x1-x0), height); }
+      }
+    }
+    const columns = Math.floor(width / Math.max(1, ratio));
+    ctx.strokeStyle = '#837b70'; ctx.lineWidth = Math.max(1, ratio * .75); ctx.beginPath();
+    for (let col = 0; col < columns; col++) {
+      const from = Math.floor(col / columns * sample.frames); const to = Math.max(from + 1, Math.floor((col + 1) / columns * sample.frames));
+      let min = 1; let max = -1;
+      for (const channel of data) for (let frame = from; frame < Math.min(to, channel.length); frame++) { const value = channel[frame]; if (value < min) min = value; if (value > max) max = value; }
+      if (max < min) { min = 0; max = 0; }
+      const x = (col + .5) / columns * width; ctx.moveTo(x, mid - max * amp); ctx.lineTo(x, mid - min * amp);
+    }
+    ctx.stroke();
+    if (plan) {
+      const bounds = plan.boundaryFrames.slice(1, -1); ctx.strokeStyle = '#a5683e'; ctx.fillStyle = '#87552f'; ctx.lineWidth = Math.max(1, ratio);
+      for (let i = 0; i < bounds.length; i++) { const x = bounds[i] / sample.frames * width; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke(); if (width / sample.frames * (plan.slices[i]?.durationFrames || 0) > 18 * ratio) { ctx.font = `${10*ratio}px sans-serif`; ctx.fillText(String(i+2), Math.min(width-16*ratio,x+3*ratio), 13*ratio); } }
+    }
+    const playhead = $('playheadLine');
+    if (playback) { playhead.style.display = 'block'; playhead.style.left = `${Math.min(100, currentFrame / sample.frames * 100)}%`; }
+    else playhead.style.display = 'none';
+  }
+  function drawPlanDetails() {
+    const sample = currentSample(); if (!sample) return;
+    const strategy = viewMode === 'original' ? reviewStrategy : viewMode; const plan = sample.plans?.[strategy];
+    $('planTitle').textContent = `${strategy === 'transient' ? 'Transient' : 'Hybrid'} plan`;
+    if (!plan) { $('planStatus').textContent = 'Unavailable'; $('sliceCount').textContent = '—'; $('matchedCount').textContent = '—'; $('differentCount').textContent = '—'; $('diagnostics').textContent = sample.error || 'Plan unavailable.'; return; }
+    $('planStatus').textContent = plan.valid ? (plan.fallback === 'none' ? 'Valid' : `Fallback: ${plan.fallback}`) : 'Invalid';
+    $('sliceCount').textContent = String(plan.sliceCount);
+    $('matchedCount').textContent = String(sample.comparison.matchingInternalBoundaries);
+    $('differentCount').textContent = String(sample.comparison.differentInternalBoundaries);
+    $('matchBanner').hidden = !sample.comparison.identical;
+    $('matchBanner').textContent = sample.comparison.identical ? 'Both plans have identical internal boundary frames. No differences are being simulated.' : 'The internal boundary positions differ between strategies.';
+    const diagnostics = sample.analysis?.beatGrid || {};
+    $('diagnostics').textContent = `Fallback: ${plan.fallback}; grid disposition: ${plan.gridDisposition}; grid fallback: ${plan.gridFallback}; grid-supported events: ${plan.gridSupportedEvents}. ${diagnostics.reason ? `Beat Grid: ${diagnostics.reason}.` : ''}`;
+    const slices = plan.slices; if (selectedSlice >= slices.length) selectedSlice = Math.max(0, slices.length - 1);
+    const slice = slices[selectedSlice];
+    if (slice) {
+      $('sliceTitle').textContent = `Slice ${slice.number} of ${slices.length}`;
+      $('sliceTiming').textContent = `[${slice.startFrame.toLocaleString()}, ${slice.endFrame.toLocaleString()}) · ${((slice.endFrame-slice.startFrame)/sample.sampleRate).toFixed(3)} s`;
+      $('activeSliceLabel').textContent = `Selected: ${slice.number} / ${slices.length}`;
+    }
+    $('playSlice').disabled = !audioBuffer || !slice;
+    $('playSequence').disabled = !audioBuffer || !slices.length;
+    $('previousSlice').disabled = !slices.length || selectedSlice <= 0;
+    $('nextSlice').disabled = !slices.length || selectedSlice >= slices.length - 1;
+    document.querySelectorAll('[data-mode]').forEach(button => button.classList.toggle('active', button.dataset.mode === viewMode));
+  }
+  function refreshPosition() {
+    const sample = currentSample(); if (!sample) return;
+    $('position').textContent = `${clock(currentFrame / sample.sampleRate)} / ${clock(sample.durationSeconds)}`;
+    $('pausePlayback').disabled = !playback;
+    $('stopPlayback').disabled = !playback && !pausedPlayback;
+    $('transportState').textContent = playback ? `Playing ${playback.mode}${playback.mode === 'slice' ? ` · slice ${selectedSlice+1}` : ''}` : (pausedPlayback ? 'Paused' : 'Stopped');
+    const playhead = $('playheadLine');
+    if (playback) { playhead.style.display = 'block'; playhead.style.left = `${Math.min(100, currentFrame / sample.frames * 100)}%`; }
+    else playhead.style.display = 'none';
+  }
+  function ensureContext() { if (!audioContext) audioContext = new AudioContext(); return audioContext; }
+  async function loadAudio(sample) {
+    audioBuffer = null; $('waveMessage').hidden = false; $('waveMessage').textContent = 'Loading PCM waveform…'; drawWaveform();
+    const response = await fetch(`/api/audio/${encodeURIComponent(sample.id)}`);
+    if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || 'Could not load PCM audio.'); }
+    const context = ensureContext(); const bytes = await response.arrayBuffer();
+    audioBuffer = await context.decodeAudioData(bytes.slice(0));
+    if (audioBuffer.length !== sample.frames || audioBuffer.sampleRate !== sample.sampleRate || audioBuffer.numberOfChannels !== sample.channels) throw new Error('Decoded PCM geometry does not match the plan frames.');
+    currentFrame = 0; drawPlanDetails(); drawWaveform(); refreshPosition();
+  }
+  function frameNow() {
+    if (!playback || !audioContext) return currentFrame;
+    const sample = currentSample();
+    return Math.min(playback.endFrame, Math.max(playback.startFrame, Math.floor(playback.startFrame + (audioContext.currentTime-playback.startedAt)*sample.sampleRate)));
+  }
+  function clearSource() {
+    cancelAnimationFrame(animation);
+    if (playback?.source) { const source = playback.source; playback = null; source.onended = null; try { source.stop(); } catch (_) {} }
+  }
+  async function startRange(mode, startFrame, endFrame, index = 0, repeat = false) {
+    if (!audioBuffer || endFrame <= startFrame) return;
+    const context = ensureContext(); await context.resume(); clearSource(); pausedPlayback = null;
+    const source = context.createBufferSource(); source.buffer = audioBuffer; source.connect(context.destination);
+    const startedAt = context.currentTime;
+    playback = { mode, source, startFrame, endFrame, scopeStart: startFrame, startedAt, index, repeat };
+    currentFrame = startFrame;
+    source.onended = () => {
+      if (!playback || playback.source !== source) return;
+      const ended = playback; playback = null; currentFrame = ended.endFrame;
+      if (ended.mode === 'slice' && ended.repeat) { const plan = currentPlan(reviewStrategy); const slice = plan?.slices[ended.index]; if (slice) { startRange('slice', slice.startFrame, slice.endFrame, ended.index, true); return; } }
+      pausedPlayback = null; refreshPosition();
+    };
+    source.start(0, startFrame / currentSample().sampleRate, (endFrame-startFrame) / currentSample().sampleRate);
+    cancelAnimationFrame(animation); const tick = () => { if (!playback) return; currentFrame = frameNow(); const plan = currentPlan(reviewStrategy); if (playback.mode === 'sequence' && plan) { const indexNow = plan.slices.findIndex(slice => currentFrame >= slice.startFrame && currentFrame < slice.endFrame); if (indexNow >= 0 && indexNow !== selectedSlice) { selectedSlice = indexNow; drawPlanDetails(); } } refreshPosition(); animation = requestAnimationFrame(tick); }; animation = requestAnimationFrame(tick);
+  }
+  function pausePlayback() {
+    if (!playback) return;
+    const current = frameNow(); const old = playback; pausedPlayback = { mode: old.mode, startFrame: old.startFrame, endFrame: old.endFrame, index: old.index, repeat: old.repeat, currentFrame: current };
+    clearSource(); currentFrame = current; cancelAnimationFrame(animation); refreshPosition();
+  }
+  function stopPlayback() {
+    const previous = playback || pausedPlayback; clearSource(); pausedPlayback = null; cancelAnimationFrame(animation);
+    if (previous) currentFrame = previous.mode === 'slice' ? previous.startFrame : 0; else currentFrame = 0;
+    refreshPosition();
+  }
+  async function playOriginal() {
+    if (!audioBuffer) return;
+    if (pausedPlayback?.mode === 'original') { const state = pausedPlayback; await startRange('original', state.currentFrame, state.endFrame); return; }
+    await startRange('original', 0, currentSample().frames);
+  }
+  async function playCurrentSlice() {
+    const slice = currentPlan(reviewStrategy)?.slices[selectedSlice]; if (!slice) return;
+    if (pausedPlayback?.mode === 'slice' && pausedPlayback.index === selectedSlice) { const state = pausedPlayback; await startRange('slice', state.currentFrame, state.endFrame, selectedSlice, state.repeat); return; }
+    await startRange('slice', slice.startFrame, slice.endFrame, selectedSlice, $('repeatSlice').checked);
+  }
+  async function playSequence() {
+    const plan = currentPlan(reviewStrategy); if (!plan?.slices.length) return;
+    if (pausedPlayback?.mode === 'sequence') { const state = pausedPlayback; await startRange('sequence', state.currentFrame, state.endFrame); return; }
+    await startRange('sequence', 0, currentSample().frames);
+  }
+  async function selectSample(id) {
+    const sample = samples.find(item => item.id === id); if (!sample) return;
+    stopPlayback(); selectedId = id; viewMode = 'transient'; reviewStrategy = 'transient'; selectedSlice = 0; audioBuffer = null;
+    document.querySelectorAll('[data-review]').forEach(button => button.classList.toggle('active', button.dataset.review === reviewStrategy));
+    document.querySelectorAll('[data-mode]').forEach(button => button.classList.toggle('active', button.dataset.mode === viewMode));
+    $('loadError').hidden = true; $('waveMessage').textContent = 'Loading PCM waveform…';
+    renderQueue(); renderMetadata(sample); renderPlanUI(); renderRatingForm(); setSave('');
+    if (sample.error) { showError(`${sample.id}: ${sample.error}`); $('waveMessage').textContent = 'This sample has a local data error. Other samples remain available.'; return; }
+    try { await loadAudio(sample); } catch (error) { showError(`${sample.id}: ${error.message}`); $('waveMessage').textContent = 'Could not decode this PCM file.'; }
+  }
+  function renderPlanUI() { drawPlanDetails(); drawWaveform(); refreshPosition(); }
+  function showError(message) { $('loadError').textContent = message; $('loadError').hidden = false; }
+  function setMode(mode) { if (mode !== viewMode) stopPlayback(); viewMode = mode; if (mode !== 'original') { reviewStrategy = mode; document.querySelectorAll('[data-review]').forEach(button => button.classList.toggle('active', button.dataset.review === reviewStrategy)); } renderPlanUI(); renderRatingForm(); }
+  function selectSlice(index) { const slices = currentPlan(reviewStrategy)?.slices || []; if (index < 0 || index >= slices.length) return; selectedSlice = index; renderPlanUI(); }
+  function saveDraftInputs() {
+    const sample = currentSample(); if (!sample) return;
+    const draft = evalDraft(sample); const values = draft.strategies[reviewStrategy];
+    for (const select of document.querySelectorAll('[data-rating]')) values[select.dataset.rating] = select.value;
+    const verdict = $('verdict'); if (verdict) values.verdict = verdict.value;
+    values.comments = $('reviewComments').value;
+  }
+  async function saveEvaluation() {
+    const sample = currentSample(); if (!sample) return;
+    saveDraftInputs(); const draft = evalDraft(sample);
+    $('saveReview').disabled = true; setSave('Saving locally…');
+    try {
+      const response = await fetch('/api/review', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:sample.id,strategies:draft.strategies,preferredStrategy:draft.preferredStrategy})});
+      const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Could not save review.');
+      sample.review = body.review; draftById.set(sample.id, {strategies:{transient:{...body.review.strategies.transient},hybrid:{...body.review.strategies.hybrid}},preferredStrategy:body.review.preferredStrategy});
+      renderQueue(); renderRatingForm(); setSave('Saved to the local review CSV.', 'ok');
+    } catch (error) { setSave(error.message, 'bad'); }
+    finally { $('saveReview').disabled = false; }
+  }
+  async function initialize() {
+    try {
+      const response = await fetch('/api/samples'); const payload = await response.json(); if (!response.ok) throw new Error(payload.error || 'Could not load local sample list.');
+      samples = payload.samples || [];
+      if (!samples.length) throw new Error('No accepted primary candidates are available in the local manifest.');
+      for (const sample of samples) { sample.review ||= {strategies:{transient:{},hybrid:{}},preferredStrategy:'',status:'unreviewed'}; sample.review.sourceStatus = 'accepted'; }
+      $('categoryFilter').addEventListener('change', renderQueue); $('statusFilter').addEventListener('change', renderQueue);
+      $('waveform').addEventListener('click', event => { const sample=currentSample(); if(!sample) return; const rect=event.currentTarget.getBoundingClientRect(); const frame=Math.min(sample.frames-1,Math.max(0,Math.floor((event.clientX-rect.left)/rect.width*sample.frames))); const plan=currentPlan(reviewStrategy); if(!plan) return; const index=plan.slices.findIndex(slice=>frame>=slice.startFrame&&frame<slice.endFrame); if(index>=0) selectSlice(index); });
+      document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>setMode(button.dataset.mode)));
+      document.querySelectorAll('[data-review]').forEach(button=>button.addEventListener('click',()=>{ saveDraftInputs(); reviewStrategy=button.dataset.review; if(viewMode!=='original') viewMode=reviewStrategy; document.querySelectorAll('[data-review]').forEach(item=>item.classList.toggle('active',item===button)); renderRatingForm(); renderPlanUI(); }));
+      $('playOriginal').addEventListener('click',()=>playOriginal().catch(error=>showError(error.message)));
+      $('playSlice').addEventListener('click',()=>playCurrentSlice().catch(error=>showError(error.message)));
+      $('playSequence').addEventListener('click',()=>playSequence().catch(error=>showError(error.message)));
+      $('pausePlayback').addEventListener('click',pausePlayback); $('stopPlayback').addEventListener('click',stopPlayback);
+      $('previousSlice').addEventListener('click',()=>selectSlice(selectedSlice-1)); $('nextSlice').addEventListener('click',()=>selectSlice(selectedSlice+1));
+      $('preference').addEventListener('change',()=>{const sample=currentSample(); if(sample) evalDraft(sample).preferredStrategy=$('preference').value; setSave('Unsaved evaluation changes');});
+      $('reviewComments').addEventListener('input',()=>{const sample=currentSample();if(sample)evalDraft(sample).strategies[reviewStrategy].comments=$('reviewComments').value;setSave('Unsaved evaluation changes');});
+      $('saveReview').addEventListener('click',saveEvaluation);
+      $('prevSample').addEventListener('click',()=>moveSample(-1)); $('nextSample').addEventListener('click',()=>moveSample(1));
+      window.addEventListener('resize',drawWaveform);
+      renderQueue(); await selectSample(samples[0].id);
+    } catch (error) { showError(error.message); $('sampleName').textContent='Could not load review queue'; $('waveMessage').textContent='Check that the local validation results are present, then restart the review server.'; }
+  }
+  function moveSample(direction) { const list=samples.filter(s=>($('categoryFilter').value==='all'||s.category===$('categoryFilter').value)&&($('statusFilter').value==='all'||s.review?.status===$('statusFilter').value)); if(!list.length)return; let index=list.findIndex(s=>s.id===selectedId); index=(index+direction+list.length)%list.length; selectSample(list[index].id); }
+  initialize();
+})();
+</script>
+</body>
+</html>
